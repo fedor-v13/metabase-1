@@ -1,8 +1,26 @@
 import ErrorBoundary from "metabase/ErrorBoundary";
 import { AdminSettingsLayout } from "metabase/admin/components/AdminLayout/AdminSettingsLayout";
+import { FIXED_METABOT_IDS } from "metabase/metabot/constants";
 import { Box } from "metabase/ui";
 
 import { MetabotNavPane } from "./MetabotNavPane";
+
+const METABOT_SETTINGS_PATHS = new Set([
+  "/admin/metabot",
+  `/admin/metabot/${FIXED_METABOT_IDS.DEFAULT}`,
+  `/admin/metabot/${FIXED_METABOT_IDS.EMBEDDED}`,
+]);
+
+const shouldScrollToTopOnPathChange = (
+  previousPathname: string | undefined,
+  nextPathname: string | undefined,
+) =>
+  !(
+    previousPathname != null &&
+    nextPathname != null &&
+    METABOT_SETTINGS_PATHS.has(previousPathname) &&
+    METABOT_SETTINGS_PATHS.has(nextPathname)
+  );
 
 export const MetabotAdminLayout = ({
   children,
@@ -16,7 +34,11 @@ export const MetabotAdminLayout = ({
     fullHeight?: boolean;
   };
 }) => (
-  <AdminSettingsLayout sidebar={<MetabotNavPane />} fullWidth={fullWidth}>
+  <AdminSettingsLayout
+    sidebar={<MetabotNavPane />}
+    fullWidth={fullWidth}
+    shouldScrollToTopOnPathChange={shouldScrollToTopOnPathChange}
+  >
     <ErrorBoundary>
       {fullWidth ? (
         <Box
