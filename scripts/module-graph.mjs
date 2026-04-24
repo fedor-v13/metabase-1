@@ -109,7 +109,7 @@ for (const el of elements) {
 /** Invisible vertical spines that anchor the horizontal layout */
 const spines = [
   ["dashboard", "common", "mlv2", "types"],
-  ["misc", "enterprise", "query_builder", "querying", "ui", "lib"],
+  ["misc", "enterprise", "query_builder", "querying", "ui", "utils"],
   ["admin", "visualizations", "api"],
   ["reference"],
 ];
@@ -253,29 +253,13 @@ function buildDot() {
   emit('  edge [fontname="Helvetica" fontsize="9" arrowsize="0.7"]');
   emit("");
 
-  // Legend
-  emit("  subgraph cluster_legend {");
-  emit('    label="Legend"');
-  emit('    fontsize="12"');
-  emit('    fontcolor="#666666"');
-  emit('    style="rounded"');
-  emit('    color="#cccccc"');
-  emit("    subgraph cluster_legend_tiers {");
-  emit('      label="Tiers"');
-  emit('      fontsize="10"');
-  emit('      fontcolor="#999999"');
-  emit('      style="rounded"');
-  emit('      color="#dddddd"');
+  // Legend swatches — declared as regular nodes so they integrate into tier rows
   for (const tierId of tierOrder) {
     const { label, color } = tiers[tierId];
     emit(
-      `      "legend_${tierId}" [label="${label}" fillcolor="${color}" width="1.0"]`,
+      `  "legend_${tierId}" [label="${label}" fillcolor="${color}" width="1.0"]`,
     );
   }
-  const legendChain = tierOrder.map((t) => `"legend_${t}"`).join(" -> ");
-  emit(`      ${legendChain} [style="invis"]`);
-  emit("    }");
-  emit("  }");
   emit("");
 
   // Module nodes
@@ -305,17 +289,26 @@ function buildDot() {
     );
     emit(`  subgraph tier_${tierId} {`);
     emit('    rank="same"');
+    emit(`    "legend_${tierId}"`);
     for (const mod of ordered) {
       emit(`    "${mod}"`);
     }
-    // Invisible chain to enforce even horizontal spacing
-    if (ordered.length >= 2) {
-      const chain = ordered.map((m) => `"${m}"`).join(" -> ");
-      emit(`    ${chain} [style="invis" weight="1"]`);
-    }
+    // Invisible chain: legend swatch anchors the leftmost column, then modules
+    const chain = [`"legend_${tierId}"`, ...ordered.map((m) => `"${m}"`)].join(
+      " -> ",
+    );
+    emit(`    ${chain} [style="invis" weight="1"]`);
     emit("  }");
     emit("");
   }
+
+  // Vertical chain through the legend column
+  for (let i = 0; i < tierOrder.length - 1; i++) {
+    emit(
+      `  "legend_${tierOrder[i]}" -> "legend_${tierOrder[i + 1]}" [style="invis" weight="100"]`,
+    );
+  }
+  emit("");
 
   // Invisible spines for horizontal anchoring
   for (const spine of spines) {
@@ -369,38 +362,84 @@ function postProcessSvg(svg) {
 
   const injected = [];
 
-  // --- Violation arrow in legend ---
-  // Find the last tier legend node to position below it
-  const lastTier = tierOrder[tierOrder.length - 1];
-  const legendMatch = svg.match(
-    new RegExp(
-      `<title>legend_${lastTier}<\\/title>\\s*<path[^>]*d="M([\\d.]+),([\\d.-]+)C`,
-    ),
+  /** Extract node path bounding box from graphviz SVG output */
+  const nodeBounds = (title) => {
+    const m = svg.match(
+      new RegExp(`<title>${title}<\\/title>\\s*<path[^>]*d="([^"]+)"`),
+    );
+    if (!m) return null;
+    const coords = [...m[1].matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((c) => [
+      parseFloat(c[1]),
+      parseFloat(c[2]),
+    ]);
+    if (!coords.length) return null;
+    return {
+      minX: Math.min(...coords.map(([x]) => x)),
+      maxX: Math.max(...coords.map(([x]) => x)),
+      minY: Math.min(...coords.map(([, y]) => y)),
+      maxY: Math.max(...coords.map(([, y]) => y)),
+    };
+  };
+
+  // Graph polygon bounds (graphviz coords) — used to detect overflow
+  const polyMatch = svg.match(
+    /id="graph0"[^>]*>[\s\S]*?<polygon[^>]*points="([\d.,-\s]+)"/,
   );
-  if (legendMatch) {
-    const nodeBottom = parseFloat(legendMatch[2]) + 29;
-    const arrowX1 = 32;
-    const arrowX2 = 72;
-    const arrowY = nodeBottom + 30;
+  let graphRight = 520;
+  let graphTop = -420;
+  let graphBottom = 20;
+  if (polyMatch) {
+    const pts = polyMatch[1].split(/\s+/).map((p) => p.split(",").map(Number));
+    graphRight = Math.max(...pts.map(([x]) => x));
+    graphTop = Math.min(...pts.map(([, y]) => y));
+    graphBottom = Math.max(...pts.map(([, y]) => y));
+  }
+
+  // Track how much injected content overflows past the graph polygon
+  let topOverflow = 0;
+  let bottomOverflow = 0;
+
+  // --- Legend bounding box + violation arrow ---
+  const firstTier = tierOrder[0];
+  const lastTier = tierOrder[tierOrder.length - 1];
+  const firstBounds = nodeBounds(`legend_${firstTier}`);
+  const lastBounds = nodeBounds(`legend_${lastTier}`);
+
+  if (firstBounds && lastBounds) {
+    const pad = 10;
+    const titleH = 22;
+    const arrowSpace = 34;
+
+    const swatchMinX = Math.min(firstBounds.minX, lastBounds.minX);
+    const swatchMaxX = Math.max(firstBounds.maxX, lastBounds.maxX);
+    const swatchMid = (swatchMinX + swatchMaxX) / 2;
+
+    const arrowX1 = swatchMid - 20;
+    const arrowX2 = swatchMid + 20;
+    const arrowY = lastBounds.maxY + arrowSpace;
+    const violationTextRight = arrowX2 + 6 + 48; // ~48pt for "violation" at 10pt
+
+    const boxX = swatchMinX - pad;
+    const boxY = firstBounds.minY - pad - titleH;
+    const boxRight = Math.max(swatchMaxX, violationTextRight) + pad;
+    const boxBottom = arrowY + 12;
+    const boxW = boxRight - boxX;
+    const boxH = boxBottom - boxY;
+
+    topOverflow = Math.max(topOverflow, graphTop - boxY + 4);
+    bottomOverflow = Math.max(bottomOverflow, boxBottom - graphBottom + 4);
+
     injected.push(
+      `<g id="legend-box">`,
+      `  <rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="8" ry="8" fill="none" stroke="#cccccc" stroke-width="1"/>`,
+      `  <text x="${boxX + boxW / 2}" y="${boxY + 14}" text-anchor="middle" font-family="Helvetica,sans-Serif" font-size="12" fill="#666666">Legend</text>`,
+      `</g>`,
       `<g id="legend-violation">`,
       `  <defs><marker id="arrowhead-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="red"/></marker></defs>`,
       `  <line x1="${arrowX1}" y1="${arrowY}" x2="${arrowX2}" y2="${arrowY}" stroke="red" stroke-width="2" marker-end="url(#arrowhead-red)"/>`,
       `  <text x="${arrowX2 + 6}" y="${arrowY + 4}" font-family="Helvetica,sans-Serif" font-size="10" fill="#888888">violation</text>`,
       `</g>`,
     );
-  }
-
-  // --- "Other modules" sidebar ---
-  const polyMatch = svg.match(
-    /id="graph0"[^>]*>[\s\S]*?<polygon[^>]*points="([\d.,-\s]+)"/,
-  );
-  let graphRight = 520;
-  let graphTop = -420;
-  if (polyMatch) {
-    const pts = polyMatch[1].split(/\s+/).map((p) => p.split(",").map(Number));
-    graphRight = Math.max(...pts.map(([x]) => x));
-    graphTop = Math.min(...pts.map(([, y]) => y));
   }
 
   const otherDirs = readdirSync("frontend/src/metabase", {
@@ -436,13 +475,15 @@ function postProcessSvg(svg) {
     `</g>`,
   );
 
-  // Expand viewBox for the sidebar
+  // Expand viewBox for the sidebar + legend overflow on top/bottom
+  const newMinY = minY - topOverflow;
   const newWidth = width + boxWidth + 60;
-  const newHeight = Math.max(height, boxHeight + 40);
+  const newHeight =
+    Math.max(height, boxHeight + 40) + topOverflow + bottomOverflow;
 
   svg = svg.replace(
     /viewBox="[^"]+"/,
-    `viewBox="${minX} ${minY} ${newWidth} ${newHeight}"`,
+    `viewBox="${minX} ${newMinY} ${newWidth} ${newHeight}"`,
   );
   svg = svg.replace(/\bwidth="[\d.]+pt"/, `width="${newWidth}pt"`);
   svg = svg.replace(/\bheight="[\d.]+pt"/, `height="${newHeight}pt"`);
