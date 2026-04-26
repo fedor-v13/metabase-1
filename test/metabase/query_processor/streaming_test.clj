@@ -297,6 +297,7 @@
                   :time-tz        "07:23:18.331Z"}
 
                  :xlsx
+                 ;; XLSX uses Apache POI date cells; Docjure parses them back as java.util.Date.
                  {:date           #inst "2019-11-01T00:00:00.000-00:00"
                   :datetime       #inst "2019-11-01T00:23:18.331-00:00"
                   :datetime-ltz   #inst "2019-11-01T07:23:18.331-00:00"
@@ -344,6 +345,7 @@
                   :time-tz        "23:23:18.331-08:00"}
 
                  :xlsx
+                 ;; XLSX uses Apache POI date cells; Docjure parses them back as java.util.Date.
                  {:date           #inst "2019-11-01T00:00:00.000-00:00"
                   :datetime       #inst "2019-11-01T00:23:18.331-00:00"
                   :datetime-ltz   #inst "2019-11-01T00:23:18.331-00:00"
