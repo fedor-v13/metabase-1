@@ -476,7 +476,6 @@
            formatter
            lib
            lib-be
-           logger
            models
            notification
            parameters
