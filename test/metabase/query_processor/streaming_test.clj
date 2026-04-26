@@ -296,7 +296,7 @@
                   :time-ltz       "07:23:18.331Z"
                   :time-tz        "07:23:18.331Z"}
 
-                 (:xlsx :ods)
+                 :xlsx
                  {:date           #inst "2019-11-01T00:00:00.000-00:00"
                   :datetime       #inst "2019-11-01T00:23:18.331-00:00"
                   :datetime-ltz   #inst "2019-11-01T07:23:18.331-00:00"
@@ -306,7 +306,18 @@
                   ;; java.util.Dates by default when parsing an XLSX doc, they have the date info here.
                   :time           #inst "1899-12-31T00:23:18.000-00:00"
                   :time-ltz       #inst "1899-12-31T07:23:18.000-00:00"
-                  :time-tz        #inst "1899-12-31T07:23:18.000-00:00"})))
+                  :time-tz        #inst "1899-12-31T07:23:18.000-00:00"}
+
+                 :ods
+                 ;; ODS stores temporal values as ISO-8601 strings rather than native date cells.
+                 {:date           "2019-11-01T00:00:00"
+                  :datetime       "2019-11-01T00:23:18.331"
+                  :datetime-ltz   "2019-11-01T07:23:18.331"
+                  :datetime-tz    "2019-11-01T07:23:18.331"
+                  :datetime-tz-id "2019-11-01T07:23:18.331"
+                  :time           "00:23:18.331"
+                  :time-ltz       "07:23:18.331"
+                  :time-tz        "07:23:18.331"})))
             (mt/with-temporary-setting-values [report-timezone "US/Pacific"]
               (test-results
                (case export-format
@@ -332,7 +343,7 @@
                   :time-ltz       "23:23:18.331-08:00"
                   :time-tz        "23:23:18.331-08:00"}
 
-                 (:xlsx :ods)
+                 :xlsx
                  {:date           #inst "2019-11-01T00:00:00.000-00:00"
                   :datetime       #inst "2019-11-01T00:23:18.331-00:00"
                   :datetime-ltz   #inst "2019-11-01T00:23:18.331-00:00"
@@ -340,7 +351,18 @@
                   :datetime-tz-id #inst "2019-11-01T00:23:18.331-00:00"
                   :time           #inst "1899-12-31T00:23:18.000-00:00"
                   :time-ltz       #inst "1899-12-31T23:23:18.000-00:00"
-                  :time-tz        #inst "1899-12-31T23:23:18.000-00:00"})))))))))
+                  :time-tz        #inst "1899-12-31T23:23:18.000-00:00"}
+
+                 :ods
+                 ;; ODS stores temporal values as ISO-8601 strings rather than native date cells.
+                 {:date           "2019-11-01T00:00:00"
+                  :datetime       "2019-11-01T00:23:18.331"
+                  :datetime-ltz   "2019-11-01T00:23:18.331"
+                  :datetime-tz    "2019-11-01T00:23:18.331"
+                  :datetime-tz-id "2019-11-01T00:23:18.331"
+                  :time           "00:23:18.331"
+                  :time-ltz       "23:23:18.331"
+                  :time-tz        "23:23:18.331"})))))))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                             Export E2E tests                                                   |
