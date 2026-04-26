@@ -840,7 +840,6 @@
            legacy-mbql
            lib
            lib-be
-           logger
            models
            premium-features
            query-processor
@@ -1724,7 +1723,6 @@
            legacy-mbql
            lib
            lib-be
-           logger
            model-persistence
            models
            parameters
@@ -3134,7 +3132,6 @@
            collections
            config
            events
-           logger
            models
            plugins
            premium-features
