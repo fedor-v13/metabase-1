@@ -954,5 +954,4 @@
             (data-perms/set-database-permission! pg (mt/id) :perms/view-data :unrestricted)
             (data-perms/set-database-permission! pg (mt/id) :perms/create-queries :query-builder)
             (is (= {:values [[1] [2] [3] [4]], :field_id (mt/id :venues :price), :has_more_values false}
-                   (mt/user-http-request :rasta :get 200 (format "field/%d/values" (mt/id :venues :price))))))))))))
-
+                   (mt/user-http-request :rasta :get 200 (format "field/%d/values" (mt/id :venues :price)))))))))))
