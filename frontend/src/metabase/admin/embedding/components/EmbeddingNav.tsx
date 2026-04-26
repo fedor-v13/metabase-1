@@ -6,7 +6,7 @@ import {
   AdminNavWrapper,
 } from "metabase/admin/components/AdminNav";
 import { useHasTokenFeature } from "metabase/common/hooks";
-import { useSelector } from "metabase/lib/redux";
+import { useSelector } from "metabase/redux";
 import { getLocation } from "metabase/selectors/routing";
 import { Divider, Flex, Stack } from "metabase/ui";
 
@@ -40,20 +40,18 @@ export function EmbeddingNav() {
 
         {/* EE with non-starter plan has embedding settings on different pages */}
         {hasSimpleEmbedding && (
-          <>
-            <EmbeddingNavItem
-              path="/admin/embedding/guest"
-              label={t`Guest embeds`}
-              icon="ghost"
-            />
-
-            <EmbeddingNavItem
-              path="/admin/embedding/security"
-              label={t`Security`}
-              icon="shield_outline"
-            />
-          </>
+          <EmbeddingNavItem
+            path="/admin/embedding/guest"
+            label={t`Guest embeds`}
+            icon="ghost"
+          />
         )}
+
+        <EmbeddingNavItem
+          path="/admin/embedding/security"
+          label={t`Security`}
+          icon="shield_outline"
+        />
       </Stack>
     </AdminNavWrapper>
   );
