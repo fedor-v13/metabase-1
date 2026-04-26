@@ -476,6 +476,7 @@
            formatter
            lib
            lib-be
+           logger
            models
            notification
            parameters
@@ -858,6 +859,7 @@
            legacy-mbql
            lib
            lib-be
+           logger
            models
            premium-features
            query-processor
