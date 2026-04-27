@@ -262,12 +262,18 @@ function buildDot() {
   }
   emit("");
 
-  // Module nodes
+  // Modules whose outgoing boundary rules are actually enforced by the linter
+  const enforcedModules = new Set(
+    graphElements.filter((e) => e.enforceOutgoing).map((e) => getName(e.type)),
+  );
+
+  // Module nodes — enforced modules get a bold border so they visually "pop"
   for (const tierId of tierOrder) {
     const { color, modules } = tiers[tierId];
     for (const mod of modules) {
+      const extra = enforcedModules.has(mod) ? ` penwidth="2"` : "";
       emit(
-        `  "${mod}" [label="${mod}" fillcolor="${color}" group="${tierId}"]`,
+        `  "${mod}" [label="${mod}" fillcolor="${color}" group="${tierId}"${extra}]`,
       );
     }
   }
@@ -417,12 +423,19 @@ function postProcessSvg(svg) {
     const arrowX1 = swatchMid - 20;
     const arrowX2 = swatchMid + 20;
     const arrowY = lastBounds.maxY + arrowSpace;
-    const violationTextRight = arrowX2 + 6 + 48; // ~48pt for "violation" at 10pt
+    const labelTextRight = arrowX2 + 6 + 42; // ~42pt for "violation"/"enforced" at 10pt
+
+    // Second indicator row: bold-bordered sample rect = "enforced"
+    const sampleW = 40;
+    const sampleH = 14;
+    const sampleX = swatchMid - sampleW / 2;
+    const enforcedY = arrowY + 22;
+    const sampleY = enforcedY - sampleH / 2;
 
     const boxX = swatchMinX - pad;
     const boxY = firstBounds.minY - pad - titleH;
-    const boxRight = Math.max(swatchMaxX, violationTextRight) + pad;
-    const boxBottom = arrowY + 12;
+    const boxRight = Math.max(swatchMaxX, labelTextRight) + pad;
+    const boxBottom = enforcedY + 12;
     const boxW = boxRight - boxX;
     const boxH = boxBottom - boxY;
 
@@ -438,6 +451,10 @@ function postProcessSvg(svg) {
       `  <defs><marker id="arrowhead-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="red"/></marker></defs>`,
       `  <line x1="${arrowX1}" y1="${arrowY}" x2="${arrowX2}" y2="${arrowY}" stroke="red" stroke-width="2" marker-end="url(#arrowhead-red)"/>`,
       `  <text x="${arrowX2 + 6}" y="${arrowY + 4}" font-family="Helvetica,sans-Serif" font-size="10" fill="#888888">violation</text>`,
+      `</g>`,
+      `<g id="legend-enforced">`,
+      `  <rect x="${sampleX}" y="${sampleY}" width="${sampleW}" height="${sampleH}" rx="4" ry="4" fill="none" stroke="#333333" stroke-width="2"/>`,
+      `  <text x="${sampleX + sampleW + 6}" y="${enforcedY + 4}" font-family="Helvetica,sans-Serif" font-size="10" fill="#888888">enforced</text>`,
       `</g>`,
     );
   }
