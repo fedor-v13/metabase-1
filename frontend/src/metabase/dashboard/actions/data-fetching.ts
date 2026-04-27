@@ -82,7 +82,7 @@ export const RECEIVE_BATCH_CARD_RESULT =
 export const receiveBatchCardResult = createAction<{
   dashcard_id: DashCardId;
   card_id: CardId;
-  result: Dataset | { error: unknown };
+  result: Dataset;
 }>(RECEIVE_BATCH_CARD_RESULT);
 
 export const FETCH_CARD_DATA = "metabase/dashboard/FETCH_CARD_DATA";
@@ -754,26 +754,12 @@ export const fetchDashboardCardData =
           completedCount++;
           dispatch(setDocumentTitle(t`${completedCount}/${totalCount} loaded`));
         },
-        onCardError: (dashcardId, cardId, error) => {
-          // Build the cached "dataset" for an errored card:
-          //   - lift `error_type` / `error_is_curated` to the top level so the
-          //     curated/permission branches in `getDashcardResultsError` fire
-          //   - keep the error message/payload under `.error`, matching the
-          //     per-card path (`fetchDataOrError` returns `{ error }` on 5xx);
-          //     the generic-error branch keys off `dataset.error` being truthy
-          //   - DO NOT spread the raw error map: it carries a `data` field
-          //     (QP error context) that would land in the Dataset's `.data`
-          //     slot and crash visualization code that does `data.cols.map(…)`
-          const { error_type, error_is_curated } = error;
+        onCardError: (dashcardId, cardId, dataset) => {
           dispatch(
             receiveBatchCardResult({
               dashcard_id: dashcardId,
               card_id: cardId,
-              result: {
-                error,
-                ...(error_type != null && { error_type }),
-                ...(error_is_curated != null && { error_is_curated }),
-              } as unknown as Dataset,
+              result: dataset,
             }),
           );
           completedCount++;
@@ -792,18 +778,19 @@ export const fetchDashboardCardData =
         // Entire batch failed before any card-begin (e.g. locked parameter
         // without JWT value). Mark every card we asked for as errored so the
         // dashcard renders an error state instead of an infinite spinner.
-        const status =
-          (err && typeof err === "object" && "status" in err
-            ? (err as { status?: number }).status
-            : undefined) ?? 500;
         const message =
           err instanceof Error ? err.message : "Batch card query failed";
+        const errorDataset = {
+          status: "failed",
+          error: message,
+          data: { cols: [], rows: [] },
+        } as unknown as Dataset;
         for (const { card, dashcard } of cardsNeedingFetch) {
           dispatch(
             receiveBatchCardResult({
               dashcard_id: dashcard.id,
               card_id: (card as Card).id,
-              result: { error: { status, message } },
+              result: errorDataset,
             }),
           );
         }
