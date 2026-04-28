@@ -4,7 +4,6 @@
   (:require
    [clojure.string :as str]
    [metabase.agent-api.validation :as agent-api.validation]
-   [metabase.agent-lib.core :as agent-lib]
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
    [metabase.api.macros.scope :as scope]
@@ -354,63 +353,64 @@
 
 ;;; ------------------------------------------------ Construct Query -------------------------------------------------
 
-(mr/def ::program-request
-  "Request body for /v2/construct-query and /v2/query.
-  An agent-lib structured program with `:source` and `:operations`. The top-level
-  `:source` must reference a database entity (`table`, `card`, `dataset`, or
-  `metric`); `context` and nested `program` sources are rejected at the HTTP
-  boundary by [[evaluate-program-for-execution]] because they require an
-  in-process evaluation context."
-  agent-lib/program-schema)
+(mr/def ::construct-query-request
+  "Request body for /v2/construct-query and the fresh-query branch of /v2/query.
+  A single `:query` key whose value is a YAML string in the canonical Metabase MBQL 5
+  representations format. The YAML is fully self-describing: the database is derived from
+  the first stage's `source-table:` or `source-card:`, all field references are portable
+  FKs (`[<db-name>, <schema>, <table-name>, <column-name>]`), and there is no auxiliary
+  `source_entity` / `referenced_entities` envelope. See
+  `resources/metabot/prompts/tools/construct_notebook_query.md` for the full format reference
+  (including operators, joins, expressions, multi-stage queries, and FK conventions)."
+  [:map
+   [:query {:tool/description (str "A YAML string containing a Metabase MBQL 5 query in the "
+                                   "canonical representations format \u2014 see the "
+                                   "construct_notebook_query tool documentation for the format "
+                                   "reference.")}
+    ms/NonBlankString]])
 
 (mr/def ::construct-query-response
   "Response containing a base64-encoded MBQL query for use with /v1/execute."
   [:map
    [:query ms/NonBlankString]])
 
-(def ^:private allowed-program-source-types
-  "Top-level program source types that the HTTP boundary accepts. `context` and
-  nested `program` sources require an in-process evaluation context and are
-  rejected here."
-  #{"table" "card" "dataset" "metric"})
+(defn- evaluate-yaml-to-live-query
+  "Run the representations pipeline (parse \u2192 repair \u2192 validate \u2192 resolve) on a YAML
+  request body and return the resolved MBQL 5 lib query (with `:lib/metadata` attached).
 
-(defn- evaluate-program-to-live-query
-  "Resolve a program's source entity, evaluate the program via agent-lib, and return
-  the live lib query (with lib metadata attached)."
-  [program]
-  (let [source-type (get-in program [:source :type])]
-    (api/check (contains? allowed-program-source-types source-type)
-               [400 (str "top-level program source must be one of: "
-                         (str/join ", " (sort allowed-program-source-types)))]))
-  (let [source-entity (metabot-construct/program-source->source-entity (:source program))
-        result        (metabot-construct/execute-program source-entity nil program)]
-    (get-in result [:structured-output :query])))
+  The pipeline raises `:agent-error?` ex-data on any LLM-input failure (unknown DB,
+  unknown table, ambiguous FK, etc.); we let those propagate so [[api.macros/defendpoint]]
+  surfaces them with the appropriate 4xx status code instead of a 500."
+  [body]
+  (-> (metabot-construct/execute-representations-query (:query body))
+      (get-in [:structured-output :query])))
 
-(defn- evaluate-program-for-execution
-  "Evaluate a program and return a plain MBQL 5 query map suitable for serialization
-  into a continuation token and execution by the QP."
-  [program]
-  (lib/prepare-for-serialization (evaluate-program-to-live-query program)))
+(defn- evaluate-yaml-for-execution
+  "Evaluate a YAML request body and return a plain MBQL 5 query map suitable for
+  serialization into a continuation token and execution by the QP."
+  [body]
+  (lib/prepare-for-serialization (evaluate-yaml-to-live-query body)))
 
 (api.macros/defendpoint :post "/v2/construct-query" :- ::construct-query-response
-  "Construct an MBQL query from a structured agent-lib program.
+  "Construct an MBQL query from a Metabase representations YAML string.
 
-  The body is the program itself: a JSON object with `source` (identifying the
-  table/card/dataset/metric to query) and `operations` (an array of operator
-  tuples). Returns a base64-encoded MBQL query that can be executed via
-  /v1/execute. See the agent_api reference for the full program syntax."
+  The body is `{\"query\": \"<yaml>\"}` where the YAML is a self-describing MBQL 5 query
+  in the canonical representations format \u2014 see the `construct_notebook_query` tool
+  documentation for the format reference. Returns a base64-encoded MBQL query that can be
+  executed via /v1/execute or paginated via /v2/query."
   {:scope metabot/agent-query-construct
    :tool  {:name "construct_query"
-           :description (str "Construct a Metabase query from a structured program with `source` and "
-                             "`operations`. Returns an opaque query string for execute_query. "
-                             "See the `metabase://docs/construct-query.md` resource for the full "
-                             "program syntax (sources, operations, operator forms, worked examples, "
-                             "and pitfalls).")
+           :description (str "Construct a Metabase query from a YAML string in the canonical "
+                             "representations format. The body is `{\"query\": \"<yaml>\"}`; "
+                             "see the construct_notebook_query tool for the YAML format "
+                             "reference (operators, joins, expressions, multi-stage queries, "
+                             "portable FKs). Returns an opaque query string that can be "
+                             "executed with execute_query.")
            :annotations {:read-only? true :idempotent? true}}}
   [_route-params
    _query-params
-   program :- ::program-request]
-  (let [query (evaluate-program-for-execution program)]
+   body :- ::construct-query-request]
+  (let [query (evaluate-yaml-for-execution body)]
     {:query (-> query json/encode u/encode-base64)}))
 
 ;;; ------------------------------------------------- Combined Query -------------------------------------------------
@@ -495,40 +495,44 @@
                        :max-results-bare-rows page-size}))
 
 (mr/def ::query-request
-  "Request body for /v2/query. Accepts either a structured program or a continuation_token."
+  "Request body for /v2/query. Accepts either a fresh-query payload (`{:query <yaml>}`,
+  same shape as /v2/construct-query) or a `:continuation_token` from a prior response."
   [:multi {:dispatch (fn [m]
-                       (if (:continuation_token m) :continuation :program))}
+                       (if (:continuation_token m) :continuation :fresh))}
    [:continuation [:map [:continuation_token ms/NonBlankString]]]
-   [:program      ::program-request]])
+   [:fresh        ::construct-query-request]])
 
 (defn- initial-page-state
   "Normalize the two /v2/query entry points into a single {:query :total-limit :page}
-   shape. A fresh program evaluates the user's program and computes a total-row budget
-   from its `:limit`; a continuation token carries that state from a prior response."
+   shape. A fresh YAML body is evaluated through the representations pipeline and the
+   total-row budget is derived from the resolved query's `:limit`; a continuation token
+   carries that state from a prior response."
   [body]
   (if-let [token (:continuation_token body)]
     (let [{:keys [query pagination]} (decode-continuation-token token)]
       {:query query :total-limit (:limit pagination) :page (:page pagination)})
-    (let [live-query (evaluate-program-to-live-query body)]
+    (let [live-query (evaluate-yaml-to-live-query body)]
       {:query       (lib/prepare-for-serialization live-query)
        :total-limit (total-row-limit live-query)
        :page        1})))
 
 (api.macros/defendpoint :post "/v2/query"
   :- (streaming-response/streaming-response-schema ::query-response)
-  "Execute a structured program and stream the results, with continuation-token pagination.
+  "Execute a representations YAML query and stream the results, with continuation-token pagination.
 
-  Accepts either a program (same shape as /v2/construct-query) or a
-  `continuation_token` from a previous response. Returns results with column
-  metadata and an optional `continuation_token` for fetching the next page."
+  Accepts either a YAML body (same shape as /v2/construct-query) or a `continuation_token`
+  from a previous response. Returns results with column metadata and an optional
+  `continuation_token` for fetching the next page."
   {:scope "agent:query"
    :tool  {:name "query"
            :title "Query Tables and Metrics"
-           :description (str "Execute a structured program and return results with column metadata. "
-                             "If more rows are available the response includes a continuation_token "
-                             "— pass it back to fetch the next page. Body is either a program (same "
-                             "shape as construct_query) or {\"continuation_token\": \"...\"}. See the "
-                             "`metabase://docs/construct-query.md` resource for program syntax.")
+           :description (str "Execute a Metabase query and return results with column "
+                             "metadata. If more rows are available, the response includes a "
+                             "continuation_token — pass it back to get the next page.\n\n"
+                             "The body is either `{\"query\": \"<yaml>\"}` (a representations "
+                             "YAML query, same format as construct_query; see the "
+                             "construct_notebook_query tool for the YAML format reference) or "
+                             "`{\"continuation_token\": \"...\"}` from a previous response.")
            :annotations {:read-only? true}}}
   [_route-params
    _query-params
