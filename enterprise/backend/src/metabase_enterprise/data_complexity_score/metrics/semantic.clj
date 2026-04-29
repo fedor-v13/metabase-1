@@ -21,6 +21,7 @@
 
    All tier 2."
   (:require
+   [clojure.string :as str]
    [metabase-enterprise.data-complexity-score.metrics.common :as common]
    [metabase.util.log :as log]))
 
@@ -152,7 +153,10 @@
 
 (defn embedder-result
   "Invoke `embedder` and return `{:name->vec <map>}` or `{:error <string>}`. Centralized so the
-  metadata dimension's `:embedding-coverage` variable can reuse the same lookup."
+  metadata dimension's `:embedding-coverage` variable can reuse the same lookup. Coerces the error
+  string so an exception with a nil/blank message (e.g. NullPointerException) still produces a
+  non-blank `:error` — `(if error …)` treats `{:error nil}` as no-error and the failure would
+  otherwise become indistinguishable from a real zero-pair scoring run."
   [entities embedder]
   (if-not embedder
     {:name->vec {}}
@@ -160,7 +164,8 @@
       {:name->vec (or (embedder entities) {})}
       (catch Throwable t
         (log/warn t "Complexity score: synonym detection failed; falling back to 0")
-        {:error (.getMessage t)}))))
+        {:error (or (some-> (.getMessage t) str/trim not-empty)
+                    (.getName (class t)))}))))
 
 (defn- entity-vectors
   "Materialize the name → vector lookup into a deterministic array of float arrays, deduping
@@ -179,17 +184,16 @@
   "Zero-valued variable block used when the embedder yields nothing (level 1 or a failure).
   With no vertices there is nothing to form a component from, so component counts are 0 and the
   ratios are nil (undefined denominators)."
-  [extra]
+  []
   (common/dimension-block
-   (cond-> [[:synonym-pairs             (common/scored (:synonym-pairs weights) 0)]
-            [:synonym-edge-density      (common/value nil)]
-            [:synonym-components        (common/value 0)]
-            [:synonym-largest-component (common/value 0)]
-            [:synonym-avg-component     (common/value nil)]
-            [:synonym-clustering-coef   (common/value nil)]
-            [:synonym-avg-degree        (common/value nil)]
-            [:synonym-degree-summary    (common/value {:p50 0 :p90 0 :max 0})]]
-     extra (conj extra))))
+   [[:synonym-pairs             (common/scored (:synonym-pairs weights) 0)]
+    [:synonym-edge-density      (common/value nil)]
+    [:synonym-components        (common/value 0)]
+    [:synonym-largest-component (common/value 0)]
+    [:synonym-avg-component     (common/value nil)]
+    [:synonym-clustering-coef   (common/value nil)]
+    [:synonym-avg-degree        (common/value nil)]
+    [:synonym-degree-summary    (common/value {:p50 0 :p90 0 :max 0})]]))
 
 (defn- singleton-block
   "Variable block for a one-vertex graph: one trivial component of size 1, no edges. The ratios
@@ -213,13 +217,13 @@
   `:embedding-coverage` variable."
   [entities {:keys [name->vec error]}]
   (if error
-    (update (empty-block nil) :variables
+    (update (empty-block) :variables
             assoc :synonym-pairs (assoc (common/scored (:synonym-pairs weights) 0)
                                         :error error))
     (let [vecs (entity-vectors entities name->vec)
           n    (alength vecs)]
       (cond
-        (zero? n) (empty-block nil)
+        (zero? n) (empty-block)
         (= 1 n)   (singleton-block)
         :else
         (let [{:keys [^objects adj edges]} (build-adjacency vecs synonym-similarity-threshold)

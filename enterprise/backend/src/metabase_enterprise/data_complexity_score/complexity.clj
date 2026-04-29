@@ -137,18 +137,22 @@
 
 (defn library-catalog
   "Library catalog enumeration — non-archived metric/model Cards and published Tables inside the
-   Library collection tree, plus the count of collections in that tree."
+   Library collection tree, plus the count of collections in that tree. Audit-DB content is
+   filtered out so library remains a strict subset of universe even when audit-db rows happen
+   to be parented by a Library collection."
   []
   (let [coll-ids (library-collection-ids)]
     (if (empty? coll-ids)
       {:entities [] :collection-count 0}
       (let [cards  (collect-card-entities [:type          [:in ["metric" "model"]]
                                            :archived      false
-                                           :collection_id [:in coll-ids]])
+                                           :collection_id [:in coll-ids]
+                                           :database_id   [:not= audit/audit-db-id]])
             tables (t2/select [:model/Table :id :name :description]
                               :active        true
                               :is_published  true
-                              :collection_id [:in coll-ids])]
+                              :collection_id [:in coll-ids]
+                              :db_id         [:not= audit/audit-db-id])]
         {:entities         (into cards (assemble-table-entities tables))
          :collection-count (count coll-ids)}))))
 
@@ -203,17 +207,32 @@
           (map ->card-entity)
           (t2/reducible-select :model/Card query))))
 
+(defn- metabot-visible-tables
+  "Tables Metabot/search can actually surface — active, non-hidden (`:visibility_type IS NULL`),
+   on a non-routed database (`db.router_database_id IS NULL`), and outside the audit DB. Mirrors
+   the table-visibility filters in `metabase.warehouse-schema.models.table` and
+   `metabase.metabot.tools.util` so hidden / technical / routed-DB tables don't inflate the
+   `:metabot` catalog."
+  []
+  (t2/select [:model/Table :id :name :description]
+             {:select    [:metabase_table.id :metabase_table.name :metabase_table.description]
+              :from      [:metabase_table]
+              :left-join [[:metabase_database :db] [:= :db.id :metabase_table.db_id]]
+              :where     [:and
+                          [:= :metabase_table.active true]
+                          [:= :metabase_table.visibility_type nil]
+                          [:= :db.router_database_id nil]
+                          [:not= :metabase_table.db_id audit/audit-db-id]]}))
+
 (defn metabot-catalog
   "Metabot catalog when any Metabot retrieval scope is in effect (verified-only, a collection
-   subtree, or both). Cards are filtered to match Metabot retrieval; Tables pass through
-   unfiltered because Metabot doesn't scope Tables by `collection_id` and there's no table-level
-   verification concept. Collection count is the Metabot scope subtree when present, otherwise
-   the full universe count."
+   subtree, or both). Cards are filtered to match Metabot retrieval; Tables are filtered through
+   [[metabot-visible-tables]] so hidden, technical, and routed-DB tables — which Metabot/search
+   never surface — don't inflate the catalog. Collection count is the Metabot scope subtree when
+   present, otherwise the full universe count."
   [scope]
   (let [card-entities (metabot-card-entities scope)
-        tables        (t2/select [:model/Table :id :name :description]
-                                 :active true
-                                 :db_id  [:not= audit/audit-db-id])
+        tables        (metabot-visible-tables)
         coll-ids      (metabot-collection-scope-ids (:collection-id scope))]
     {:entities         (into card-entities (assemble-table-entities tables))
      :collection-count (or (some-> coll-ids count) (universe-collection-count))}))
@@ -358,12 +377,13 @@
    embedder
    {:keys [level embedding-model-meta text-variant metabot-catalog]}]
   (let [level        (settings/clamp-level (or level (settings/semantic-complexity-level)))
+        ;; At level 0 the embedder is never invoked, so we deliberately omit
+        ;; `:embedding-model` / `:text-variant` even when the caller passed them — meta
+        ;; advertising a synonym-axis configuration that wasn't used would mislead consumers.
         empty-result {:library  (empty-score)
                       :universe (empty-score)
                       :metabot  (empty-score)
-                      :meta     (cond-> {:formula-version formula-version :level 0}
-                                  embedding-model-meta (assoc :embedding-model embedding-model-meta)
-                                  text-variant         (assoc :text-variant    text-variant))}]
+                      :meta     {:formula-version formula-version :level 0}}]
     (if (zero? ^long level)
       empty-result
       (let [universe-score (score-catalog uni-entities {:collection-count uni-coll} embedder level)]
@@ -439,8 +459,8 @@
     (try
       (let [[library universe metabot]
             ;; Single enumerate phase. The level-0 short-circuit returns empty catalogs without
-            ;; hitting the app-db at all; library / universe / metabot enumerations are cheap
-            ;; relative to scoring, so they stay outside the per-catalog `score` timing buckets.
+            ;; hitting the app-db at all; scoring is timed under a single `"all"` bucket too, so
+            ;; one enumerate label and one score label is enough to attribute the whole run.
             (time-phase! "enumerate" "all"
                          #(if (zero? ^long level)
                             [{:entities [] :collection-count 0}

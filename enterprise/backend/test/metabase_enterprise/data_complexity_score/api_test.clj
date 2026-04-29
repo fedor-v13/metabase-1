@@ -2,12 +2,15 @@
   (:require
    [clojure.test :refer :all]
    [metabase-enterprise.data-complexity-score.api :as api]
+   [metabase-enterprise.data-complexity-score.complexity :as complexity]
    [metabase-enterprise.data-complexity-score.complexity-embedders :as embedders]
    [metabase-enterprise.data-complexity-score.metabot-scope :as metabot-scope]
    [metabase-enterprise.data-complexity-score.synonym-source :as synonym-source]
    [metabase.metabot.config :as metabot.config]
    [metabase.test :as mt]
-   [toucan2.core :as t2]))
+   [toucan2.core :as t2])
+  (:import
+   (java.util.concurrent CountDownLatch TimeUnit)))
 
 (set! *warn-on-reflection* true)
 
@@ -206,6 +209,59 @@
                    (:universe parent-counts)
                    (:universe sibling-counts))
                 ":universe must be unscoped regardless of Metabot.collection_id")))))))
+
+(def ^:private stub-scores
+  "Minimum-shape result `complexity-scores` must return — passes the endpoint's response schema so
+   the second concurrent request lands purely on the AtomicBoolean guard, not on response coercion."
+  (let [scored-var      {:value 0 :score 0}
+        descriptive-var {:value nil}
+        scale           {:variables {:entity-count         scored-var
+                                     :field-count          scored-var
+                                     :collection-tree-size scored-var
+                                     :fields-per-entity    descriptive-var
+                                     :measure-to-dim-ratio descriptive-var}
+                         :sub-total 0}
+        nominal         {:variables {:name-collisions         scored-var
+                                     :repeated-measures       scored-var
+                                     :field-level-collisions  scored-var
+                                     :name-collisions-density descriptive-var
+                                     :name-concentration      descriptive-var}
+                         :sub-total 0}
+        catalog         {:dimensions {:scale scale :nominal nominal} :total 0}]
+    {:library catalog :universe catalog :metabot catalog
+     :meta    {:formula-version 1 :level 1}}))
+
+(deftest ^:sequential complexity-endpoint-rejects-concurrent-requests-test
+  (testing "a second concurrent request fast-fails with 409 instead of running a duplicate scoring pass"
+    ;; Block the stubbed scoring call on a latch so the second request is guaranteed to land
+    ;; while the guard is held. Plain `with-redefs` (not `with-dynamic-fn-redefs`) because
+    ;; the dynamic variant binds thread-locally and the futures we spawn here wouldn't see it.
+    (let [release-scoring (CountDownLatch. 1)
+          scoring-started (CountDownLatch. 1)
+          call-count      (atom 0)]
+      (with-redefs [complexity/complexity-scores
+                    (fn [& _]
+                      (swap! call-count inc)
+                      (.countDown scoring-started)
+                      (.await release-scoring 10 TimeUnit/SECONDS)
+                      stub-scores)]
+        (let [first-request (future (mt/user-http-request :crowberto :get 200 endpoint))]
+          (try
+            (is (.await scoring-started 10 TimeUnit/SECONDS)
+                "first request must reach the guarded section before we fire the second")
+            (testing "concurrent superuser request is rejected with 409"
+              (is (= "Data Complexity Score calculation already in progress"
+                     (mt/user-http-request :crowberto :get 409 endpoint))))
+            (finally
+              (.countDown release-scoring)
+              ;; Drain the in-flight request so the guard is released before the next test
+              ;; (failed assertions above shouldn't leak a stuck scoring call into other tests).
+              (deref first-request 10000 ::timeout))))
+        (testing "only the first request actually ran scoring; the second short-circuited"
+          (is (= 1 @call-count)))
+        (testing "guard is released after the in-flight request finishes — a follow-up request succeeds"
+          (mt/user-http-request :crowberto :get 200 endpoint)
+          (is (= 2 @call-count)))))))
 
 (deftest internal-metabot-scope-test
   (testing ":verified-only? is true only when the premium feature + use_verified_content both apply"

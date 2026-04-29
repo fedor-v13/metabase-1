@@ -1,5 +1,6 @@
 (ns metabase-enterprise.data-complexity-score.complexity-test
   (:require
+   [clojure.string :as str]
    [clojure.test :refer :all]
    [metabase-enterprise.data-complexity-score.complexity :as complexity]
    [metabase-enterprise.data-complexity-score.complexity-embedders :as embedders]
@@ -16,6 +17,7 @@
    [metabase.analytics.core :as analytics]
    [metabase.analytics.snowplow-test :as snowplow-test]
    [metabase.app-db.cluster-lock :as cluster-lock]
+   [metabase.audit-app.core :as audit]
    [metabase.collections.core :as collections]
    [metabase.collections.test-utils :as collections.tu]
    [metabase.startup.core :as startup]
@@ -152,7 +154,21 @@
           embedder (fn [_] (throw (ex-info "boom" {})))]
       (is (=? {:dimensions {:semantic {:variables {:synonym-pairs {:value 0 :score 0
                                                                    :error "boom"}}}}}
-              (score-entities es embedder 2))))))
+              (score-entities es embedder 2)))))
+  (testing "throwable with a nil/blank message still records :error as a non-blank string"
+    ;; Regression: an exception with nil getMessage (e.g. NullPointerException) used to surface as
+    ;; `{:error nil}`, which `(if error …)` treats as no-error — the failure became indistinguishable
+    ;; from a real zero-pair scoring run. Coerce to the class name so the leaf event always carries
+    ;; a non-blank string and downstream readers can tell scoring failed.
+    (doseq [boom [(NullPointerException.)
+                  (ex-info "" {})
+                  (ex-info "   " {})]]
+      (let [es       [(entity :name "a") (entity :name "b")]
+            embedder (fn [_] (throw boom))
+            result   (score-entities es embedder 2)
+            err      (get-in result [:dimensions :semantic :variables :synonym-pairs :error])]
+        (is (string? err))
+        (is (not (str/blank? err)))))))
 
 (deftest ^:parallel semantic-dim-singleton-and-edge-density-regression-test
   (testing "a singleton graph reports one component and zero-valued graph ratios"
@@ -322,6 +338,67 @@
            (is (= 0 (get-in library [:dimensions :scale :variables :entity-count :value]))))
          (testing "universe still enumerates appdb content"
            (is (pos? (:total universe)))))))))
+
+(deftest ^:sequential library-excludes-audit-content-test
+  (testing "published audit-db content in the Library tree is excluded so :library stays a subset of :universe"
+    ;; Regression: library-catalog used to skip the audit-db filter applied to universe. An audit
+    ;; card/table placed in a Library collection would push :library past :universe and break the
+    ;; library ⊆ universe invariant the hermetic scoring tests rely on.
+    (mt/with-temp [:model/Collection {lib-id :id}   {:type     collections/library-collection-type
+                                                     :name     "Library"
+                                                     :location "/"}
+                   :model/Collection {data-id :id}  {:type     collections/library-data-collection-type
+                                                     :name     "Data"
+                                                     :location (format "/%d/" lib-id)}
+                   :model/Collection {mets-id :id}  {:type     collections/library-metrics-collection-type
+                                                     :name     "Metrics"
+                                                     :location (format "/%d/" lib-id)}
+                   :model/Database   {fake-audit :id} {:name "Fake Audit DB"}
+                   :model/Database   {real-db :id}    {:name "Non-audit DB"}
+                   :model/Table      _              {:db_id        fake-audit :name "audit_events"
+                                                     :active       true       :is_published true
+                                                     :collection_id data-id}
+                   :model/Card       _              {:database_id  fake-audit :type :metric :name "Audit Revenue"
+                                                     :archived     false      :collection_id mets-id}
+                   :model/Table      _              {:db_id        real-db    :name "lib_orders"
+                                                     :active       true       :is_published true
+                                                     :collection_id data-id}
+                   :model/Card       _              {:database_id  real-db    :type :metric :name "Real Revenue"
+                                                     :archived     false      :collection_id mets-id}]
+      (with-redefs [audit/audit-db-id fake-audit]
+        (let [{:keys [library]} (complexity/complexity-scores :embedder nil)]
+          (is (= 2 (get-in library [:dimensions :scale :variables :entity-count :value]))
+              "only the two non-audit entities count (audit table + audit metric card excluded)"))))))
+
+(deftest ^:sequential metabot-catalog-excludes-hidden-tables-test
+  (testing ":metabot tables filter out hidden (`visibility_type` non-nil) and routed-DB tables so the
+           catalog matches what Metabot/search can actually surface"
+    ;; Regression: `:metabot` previously counted every active non-audit table, which overcounted on
+    ;; instances with hidden tables or routed-database tables — Metabot never surfaces those.
+    (mt/with-temp
+      [:model/Database {router-db :id} {:name "Router DB"}
+       :model/Database {routed-db :id} {:name "Routed DB" :router_database_id router-db}
+       :model/Database {plain-db :id}  {:name "Plain DB"}
+       :model/Table    {visible :id}   {:db_id plain-db  :name "visible_table"
+                                        :active true :visibility_type nil}
+       :model/Table    {hidden :id}    {:db_id plain-db  :name "hidden_table"
+                                        :active true :visibility_type "hidden"}
+       :model/Table    {technical :id} {:db_id plain-db  :name "technical_table"
+                                        :active true :visibility_type "technical"}
+       :model/Table    {routed :id}    {:db_id routed-db :name "routed_table"
+                                        :active true :visibility_type nil}]
+      (let [{:keys [entities]} (complexity/metabot-catalog {:verified-only? false :collection-id nil})
+            ids                (into #{} (comp (filter #(= :table (:kind %))) (map :id)) entities)]
+        (testing "visible non-routed table is included"
+          (is (contains? ids visible)))
+        (testing "hidden and technical tables are excluded"
+          (is (not (contains? ids hidden))
+              "tables with visibility_type=hidden are filtered out")
+          (is (not (contains? ids technical))
+              "tables with visibility_type=technical are filtered out"))
+        (testing "tables on a routed database are excluded"
+          (is (not (contains? ids routed))
+              "tables whose db has router_database_id are filtered out"))))))
 
 #_{:clj-kondo/ignore [:metabase/validate-deftest]}
 (deftest ^:parallel startup-logic-registered-test
