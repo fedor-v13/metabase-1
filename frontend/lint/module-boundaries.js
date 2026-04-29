@@ -261,4 +261,4 @@ function buildEnforcedRules(elements, rules) {
 
 const enforcedRules = buildEnforcedRules(elements, rules);
 
-export { elements, rules, enforcedRules };
+module.exports = { elements, rules, enforcedRules };
