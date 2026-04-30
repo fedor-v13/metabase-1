@@ -1,12 +1,18 @@
 (ns metabase-enterprise.data-complexity-score.api
-  "Admin-only HTTP endpoint exposing the data complexity score."
+  "Admin-only HTTP endpoint exposing the Data Complexity Score."
   (:require
    [metabase-enterprise.data-complexity-score.complexity :as complexity]
    [metabase-enterprise.data-complexity-score.metabot-scope :as metabot-scope]
+   [metabase-enterprise.data-complexity-score.models.data-complexity-score :as data-complexity-score]
+   [metabase-enterprise.data-complexity-score.settings :as settings]
    [metabase-enterprise.data-complexity-score.synonym-source :as synonym-source]
+   [metabase-enterprise.data-complexity-score.task.complexity-score :as task.complexity-score]
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
-   [metabase.api.routes.common :refer [+auth]]))
+   [metabase.api.routes.common :refer [+auth]]
+   [metabase.util :as m.util]
+   [metabase.util.i18n :refer [tru]]
+   [metabase.util.malli.schema :as ms]))
 
 (set! *warn-on-reflection* true)
 
@@ -16,6 +22,10 @@
 ;;;   - scored       `{:value <num> :score <num>}`           contributes to a dimension sub-total
 ;;;   - descriptive  `{:value <scalar-or-nil>}`              doesn't contribute
 ;;; `:value` may be nil (undefined ratio) or a richer structure (see DegreeSummary below).
+;;;
+;;; The complexity engine emits kebab-case internally; `m.util/deep-snake-keys` rewrites the
+;;; payload at the API boundary so the schemas below describe the snake_case shape the client
+;;; actually receives.
 
 (def ^:private ScoredVar
   [:map
@@ -43,48 +53,48 @@
   [:map
    [:variables
     [:map
-     [:entity-count         ScoredVar]
-     [:field-count          ScoredVar]
-     [:collection-tree-size ScoredVar]
-     [:fields-per-entity    ValueVar]
-     [:measure-to-dim-ratio ValueVar]]]
-   [:sub-total number?]])
+     [:entity_count         ScoredVar]
+     [:field_count          ScoredVar]
+     [:collection_tree_size ScoredVar]
+     [:fields_per_entity    ValueVar]
+     [:measure_to_dim_ratio ValueVar]]]
+   [:sub_total number?]])
 
 (def ^:private NominalDim
   [:map
    [:variables
     [:map
-     [:name-collisions         ScoredVar]
-     [:repeated-measures       ScoredVar]
-     [:field-level-collisions  ScoredVar]
-     [:name-collisions-density ValueVar]
-     [:name-concentration      ValueVar]]]
-   [:sub-total number?]])
+     [:name_collisions         ScoredVar]
+     [:repeated_measures       ScoredVar]
+     [:field_level_collisions  ScoredVar]
+     [:name_collisions_density ValueVar]
+     [:name_concentration      ValueVar]]]
+   [:sub_total number?]])
 
 (def ^:private SemanticDim
   [:map
    [:variables
     [:map
-     [:synonym-pairs              ScoredVar]
-     [:synonym-edge-density       ValueVar]
-     [:synonym-components         ValueVar]
-     [:synonym-largest-component  ValueVar]
-     [:synonym-avg-component      ValueVar]
-     [:synonym-clustering-coef    ValueVar]
-     [:synonym-avg-degree         ValueVar]
-     [:synonym-degree-summary     DegreeSummaryVar]]]
-   [:sub-total number?]])
+     [:synonym_pairs              ScoredVar]
+     [:synonym_edge_density       ValueVar]
+     [:synonym_components         ValueVar]
+     [:synonym_largest_component  ValueVar]
+     [:synonym_avg_component      ValueVar]
+     [:synonym_clustering_coef    ValueVar]
+     [:synonym_avg_degree         ValueVar]
+     [:synonym_degree_summary     DegreeSummaryVar]]]
+   [:sub_total number?]])
 
 (def ^:private MetadataDim
   [:map
    [:variables
     [:map
-     [:description-coverage       ValueVar]
-     [:field-description-coverage ValueVar]
-     [:semantic-type-coverage     ValueVar]
-     [:curated-metric-coverage    ValueVar]
-     [:embedding-coverage         ValueVar]
-     [:description-quality        ValueVar]]]
+     [:description_coverage       ValueVar]
+     [:field_description_coverage ValueVar]
+     [:semantic_type_coverage     ValueVar]
+     [:curated_metric_coverage    ValueVar]
+     [:embedding_coverage         ValueVar]
+     [:description_quality        ValueVar]]]
    [:coverage [:maybe number?]]])
 
 (def ^:private Dimensions
@@ -102,25 +112,27 @@
 
 (def ^:private EmbeddingModelMeta
   "Identifies the embedding model backing the synonym calculations, so benchmark consumers can pin
-  to it. `nil` when the search-index path is in use and semantic search has not been configured."
+  to it. Absent from `:meta` when the synonym axis wasn't computed (level 0 / 1)."
   [:maybe
    [:map
     [:provider         string?]
-    [:model-name       string?]
-    [:model-dimensions {:optional true} pos-int?]]])
+    [:model_name       string?]
+    [:model_dimensions {:optional true} pos-int?]]])
 
 (def ^:private ComplexityScoresResponse
+  "Full response body for `GET /api/ee/data-complexity-score/complexity`."
   [:map
    [:library  Catalog]
    [:universe Catalog]
    [:metabot  Catalog]
    [:meta
     [:map
-     [:formula-version   pos-int?]
+     [:formula_version   pos-int?]
      [:level             nat-int?]
-     [:synonym-threshold {:optional true} number?]
-     [:embedding-model   {:optional true} EmbeddingModelMeta]
-     [:text-variant      {:optional true} keyword?]]]])
+     [:synonym_threshold {:optional true} number?]
+     [:embedding_model   {:optional true} EmbeddingModelMeta]
+     [:text_variant      {:optional true} keyword?]
+     [:calculated_at     {:optional true} some?]]]])
 
 ;; Per-JVM single-flight guard for the /complexity endpoint. Each scoring run walks the entire
 ;; app-db catalog and emits Snowplow events, so concurrent superuser requests on the same node
@@ -133,21 +145,45 @@
 (defonce ^:private ^java.util.concurrent.atomic.AtomicBoolean api-scoring-running?
   (java.util.concurrent.atomic.AtomicBoolean. false))
 
-(api.macros/defendpoint :get "/complexity" :- ComplexityScoresResponse
-  "Return the current data complexity score for this instance.
-  Superuser-only, expensive, and emits Snowplow events for benchmark consumers. Concurrent
-  requests on the same JVM fast-fail with HTTP 409 — a scoring pass walks the full app-db
-  catalog and one in-flight run per node is enough."
-  [_route _query _body]
-  (api/check-superuser)
+(defn- force-recalculate-score!
+  "Run the Data Complexity Score job now, persist the fresh snapshot, and return it.
+  This is expensive and emits Snowplow events for benchmark consumers. Concurrent requests
+  on the same JVM fast-fail with HTTP 409 — a scoring pass walks the full app-db catalog
+  and one in-flight run per node is enough. The guard is per-JVM, so in a clustered
+  deployment each node can still run one pass concurrently."
+  []
   (when-not (.compareAndSet api-scoring-running? false true)
     (throw (ex-info "Data Complexity Score calculation already in progress" {:status-code 409})))
   (try
-    (complexity/complexity-scores
-     (assoc (synonym-source/complexity-scores-opts)
-            :metabot-scope (metabot-scope/internal-metabot-scope)))
+    (let [fingerprint (task.complexity-score/current-fingerprint)
+          result      (complexity/complexity-scores
+                       (assoc (synonym-source/complexity-scores-opts)
+                              :metabot-scope (metabot-scope/internal-metabot-scope)))
+          stored      (data-complexity-score/record-score! fingerprint result)]
+      ;; Advance the last-published fingerprint iff Snowplow actually accepted the event — mirrors
+      ;; the scheduled path's gate in `task.complexity-score/run-scoring!`. Without this, a
+      ;; superuser-triggered recalculation leaves the setting stale and the next boot would
+      ;; redundantly re-score even though a valid snapshot was just persisted.
+      (when (::complexity/snowplow-published? (meta result))
+        (settings/data-complexity-scoring-last-fingerprint! fingerprint))
+      (m.util/deep-snake-keys (or stored result)))
     (finally
       (.set api-scoring-running? false))))
+
+(api.macros/defendpoint :get "/complexity" :- ComplexityScoresResponse
+  "Return the most recently stored Data Complexity Score for this instance.
+  Pass `force-recalculation=true` to recompute, persist, and return a fresh score.
+  Superuser-only."
+  [_route
+   {force-recalculation? :force-recalculation} :- [:map
+                                                   [:force-recalculation {:default false} ms/BooleanValue]]
+   _body]
+  (api/check-superuser)
+  (if force-recalculation?
+    (force-recalculate-score!)
+    (api/check-404 (some-> (data-complexity-score/latest-score (task.complexity-score/current-fingerprint))
+                           m.util/deep-snake-keys)
+                   (tru "Data Complexity Score has not been computed yet. Recompute it to create the first snapshot."))))
 
 (def ^{:arglists '([request respond raise])} routes
   "`/api/ee/data-complexity-score` routes."
