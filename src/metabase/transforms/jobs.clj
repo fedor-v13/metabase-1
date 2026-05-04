@@ -275,7 +275,10 @@
 (task/defjob  ^{:doc "Times out transform jobs when necessary."
                 org.quartz.DisallowConcurrentExecution true}
   TimeoutOldRuns [_ctx]
-  (transforms.job-run/timeout-old-runs! (transforms.settings/transform-timeout) :minute))
+  (tracing/with-span :tasks "task.transform.timeout-check" {:transform.timeout/type "job"}
+    (let [timed-out (transforms.job-run/timeout-old-runs! (transforms.settings/transform-timeout) :minute)]
+      (when (pos? timed-out)
+        (log/infof "Timed out %d transform job run(s)." timed-out)))))
 
 (defn- start-job! []
   (when (not (task/job-exists? job-key))
