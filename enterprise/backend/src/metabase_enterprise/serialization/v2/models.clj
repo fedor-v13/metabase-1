@@ -34,6 +34,7 @@
   (concat data-model
           content
           ["CustomVizPlugin"
+           "EmbeddingTheme"
            "FieldValues"
            "Metabot"
            "PythonLibrary"
@@ -77,6 +78,7 @@
    "ConnectionImpersonation"
    "ContentTranslation"
    "DashboardBookmark"
+   "DataComplexityScore"
    "DataPermissions"
    "DatabaseRouter"
    "Dependency"
@@ -86,6 +88,7 @@
    "ImplicitAction"
    "LoginHistory"
    "MetabotConversation"
+   "MetabotFeedback"
    "MetabotGroupLimit"
    "MetabotInstanceLimit"
    "MetabotMessage"

@@ -404,7 +404,11 @@
    can resolve `getAssetUrl` calls without HTTP."
   [card]
   (when-let [identifier (render.util/custom-viz-identifier (:display card))]
-    (let [{:keys [manifest] :as plugin} (t2/select-one :model/CustomVizPlugin :identifier identifier :enabled true)]
+    (let [{:keys [manifest] :as plugin}
+          ;; do not load the (potentially multi-MB) :bundle blob just to read the manifest;
+          ;; resolve-bundle / resolve-asset re-fetch bytes from the cache as needed.
+          (t2/select-one [:model/CustomVizPlugin :id :identifier :enabled :manifest :bundle_hash :dev_bundle_url]
+                         :identifier identifier :enabled true)]
       (when-let [content (some-> plugin
                                  custom-viz-plugin/resolve-bundle
                                  :content)]
@@ -429,26 +433,21 @@
                              (get card :visualization_settings))
         {rendered-type :type content :content} (js.svg/*javascript-visualization* cards-with-data viz-settings
                                                                                   (custom-viz-bundles card))]
-    ;; If the custom viz plugin didn't define a StaticVisualizationComponent,
-    ;; RenderChart returns an empty string. Fall back to table rendering.
-    (if (and (render.util/custom-viz-display? (:display card))
-             (str/blank? content))
-      (render :table render-type _timezone-id card dashcard data)
-      (case rendered-type
-        :svg
-        (let [image-bundle (image-bundle/make-image-bundle
-                            render-type
-                            (js.svg/svg-string->bytes content))]
-          {:attachments
-           (when image-bundle
-             (image-bundle/image-bundle->attachment image-bundle))
+    (case rendered-type
+      :svg
+      (let [image-bundle (image-bundle/make-image-bundle
+                          render-type
+                          (js.svg/svg-string->bytes content))]
+        {:attachments
+         (when image-bundle
+           (image-bundle/image-bundle->attachment image-bundle))
 
-           :content
-           [:div
-            [:img {:style (style/style {:display :block :width :100%})
-                   :src   (:image-src image-bundle)}]]})
-        :html
-        {:content [:div content] :attachments nil}))))
+         :content
+         [:div
+          [:img {:style (style/style {:display :block :width :100%})
+                 :src   (:image-src image-bundle)}]]})
+      :html
+      {:content [:div content] :attachments nil})))
 
 (defn- smart-scalar-comparison-statement
   [unit value]

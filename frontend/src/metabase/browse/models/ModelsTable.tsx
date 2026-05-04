@@ -20,6 +20,7 @@ import type { ResponsiveProps } from "metabase/common/components/ItemsTable/util
 import { Link } from "metabase/common/components/Link";
 import { MarkdownPreview } from "metabase/common/components/MarkdownPreview";
 import { useGetIcon } from "metabase/hooks/use-icon";
+import { useDispatch } from "metabase/redux";
 import {
   Ellipsified,
   FixedSizeIcon,
@@ -27,8 +28,7 @@ import {
   Repeat,
   Skeleton,
 } from "metabase/ui";
-import { useDispatch } from "metabase/utils/redux";
-import * as Urls from "metabase/utils/urls";
+import * as Urls from "metabase/urls";
 import type { SortingOptions } from "metabase-types/api";
 
 import BrowseTableS from "../components/BrowseTable.module.css";

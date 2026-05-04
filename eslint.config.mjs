@@ -47,7 +47,7 @@ const baseMetabaseRestrictedConfig = {
     {
       name: "react-redux",
       importNames: ["useSelector", "useDispatch", "connect"],
-      message: "Please import from `metabase/utils/redux` instead.",
+      message: "Please import from `metabase/redux` instead.",
     },
     {
       name: "@mantine/core",
@@ -80,6 +80,7 @@ const configs = [
       "e2e/support/cypress_sample_instance_data.js",
       "e2e/support/assets/**",
       "e2e/embedding-sdk-host-apps/**",
+      "e2e/tmp/**",
       "frontend/test/__support__/custom-viz-fixtures/**/*.js",
       "node_modules/**",
       "**/dist/**",
@@ -347,7 +348,7 @@ const configs = [
   },
   {
     files: [
-      "**/*.unit.spec.*",
+      "**/*.spec.*",
       "frontend/lint/**/*",
       "**/*.stories.*",
       "**/stories-data.*",
@@ -583,7 +584,7 @@ const configs = [
     },
   },
   {
-    files: ["frontend/src/metabase/utils/redux/hooks.ts"],
+    files: ["frontend/src/metabase/redux/hooks.ts"],
     rules: {
       "no-restricted-imports": "off",
     },
@@ -645,7 +646,7 @@ const configs = [
             {
               name: "react-redux",
               importNames: ["useSelector", "useDispatch", "connect"],
-              message: "Please import from `metabase/utils/redux` instead.",
+              message: "Please import from `metabase/redux` instead.",
             },
             {
               name: "@mantine/core",
@@ -698,7 +699,7 @@ const configs = [
                 "!metabase/utils/time",
                 "!metabase/utils/time-dayjs",
                 "!metabase/utils/types",
-                "!metabase/utils/urls",
+                "!metabase/urls",
                 "!metabase/utils/clone",
               ],
             },
@@ -872,7 +873,7 @@ const configs = [
               message: 'Please use "useSdkSelector", "useSdkDispatch"',
             },
             {
-              name: "metabase/utils/redux",
+              name: "metabase/redux",
               importNames: ["useStore", "useDispatch"],
               message: 'Please use "useSdkStore", "useSdkDispatch"',
             },
