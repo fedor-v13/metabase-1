@@ -1,7 +1,3 @@
-import type {
-  EmbeddingParameters,
-  EmbeddingType,
-} from "metabase/public/lib/types";
 import type { IconName } from "metabase/ui";
 import type { CurrencyStyle } from "metabase/utils/formatting";
 import type { PieRow } from "metabase/visualizations/echarts/pie/model/types";
@@ -18,6 +14,7 @@ import type {
 import type { Database, DatabaseId } from "./database";
 import type { RowValue } from "./dataset";
 import type { Document, DocumentId } from "./document";
+import type { EmbeddingParameters, EmbeddingType } from "./embed";
 import type { BaseEntityId } from "./entity-id";
 import type { Field } from "./field";
 import type { ModerationReview } from "./moderation";

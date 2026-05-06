@@ -15,7 +15,6 @@ import {
 } from "metabase/parameters/utils/dashboards";
 import { getParameterMappingOptions as _getParameterMappingOptions } from "metabase/parameters/utils/mapping-options";
 import { getVisibleParameters } from "metabase/parameters/utils/ui";
-import type { EmbeddingParameterVisibility } from "metabase/public/lib/types";
 import type {
   ClickBehaviorSidebarState,
   EditParameterSidebarState,
@@ -45,6 +44,7 @@ import type {
   DashboardCard,
   DashboardId,
   DashboardParameterMapping,
+  EmbeddingParameterVisibility,
   ParameterId,
   VirtualCard,
 } from "metabase-types/api";
