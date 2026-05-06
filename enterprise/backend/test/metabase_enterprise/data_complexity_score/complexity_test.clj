@@ -149,12 +149,17 @@
           embedder (mock-embedder {"a" [1.0 0.0] "b" [0.99 0.01]})]
       (is (=? {:dimensions {:semantic {:variables {:synonym-pairs {:value 1 :score 50}}}}}
               (score-entities es embedder 2)))))
-  (testing "embedder failure degrades gracefully (score 0, not exception; :error propagates)"
+  (testing "embedder failure cascades nil through synonym-pairs :score and the dimension :sub-total
+            instead of falling back to 0 — keeps a failed run distinguishable from a real zero so
+            the catalog total doesn't silently low-bias by ~50"
     (let [es       [(entity :name "a") (entity :name "b")]
-          embedder (fn [_] (throw (ex-info "boom" {})))]
-      (is (=? {:dimensions {:semantic {:variables {:synonym-pairs {:value 0 :score 0
-                                                                   :error "boom"}}}}}
-              (score-entities es embedder 2)))))
+          embedder (fn [_] (throw (ex-info "boom" {})))
+          result   (score-entities es embedder 2)]
+      (is (=? {:dimensions {:semantic {:variables  {:synonym-pairs {:value nil :score nil
+                                                                    :error "boom"}}
+                                       :sub-total  nil}}
+               :total       nil}
+              result))))
   (testing "throwable with a nil/blank message still records :error as a non-blank string"
     ;; Regression: an exception with nil getMessage (e.g. NullPointerException) used to surface as
     ;; `{:error nil}`, which `(if error …)` treats as no-error — the failure became indistinguishable
@@ -282,20 +287,24 @@
                                  :metabot-scope {:verified-only? false :collection-id 42})]
           (is (= {:verified-only? false :collection-id 42} @captured))
           (is (= 1 (get-in metabot [:dimensions :scale :variables :entity-count :value])))))))
-  (testing "empty scope reuses the :universe score without recomputing"
+  (testing "empty scope still routes through metabot-catalog so the visibility filter applies"
+    ;; Pre-v2 the empty-scope path reused the :universe score verbatim, which over-counted hidden
+    ;; / routed-DB tables that Metabot never surfaces. The catalog now runs unconditionally.
     (doseq [scope [nil {} {:verified-only? false :collection-id nil}]]
-      (let [metabot-called? (atom false)]
+      (let [captured (atom :unset)]
         (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog []))
-                                    complexity/universe-catalog (fn [] (catalog [(entity :name "orders")]))
-                                    complexity/metabot-catalog  (fn [_]
-                                                                  (reset! metabot-called? true)
-                                                                  (catalog []))]
+                                    complexity/universe-catalog (fn [] (catalog [(entity :name "orders")
+                                                                                 (entity :name "hidden")]))
+                                    complexity/metabot-catalog  (fn [s]
+                                                                  (reset! captured s)
+                                                                  (catalog [(entity :name "orders")]))]
           (let [{:keys [universe metabot]} (complexity/complexity-scores
                                             :embedder nil
                                             :metabot-scope scope)]
-            (is (not @metabot-called?)
-                (format "metabot-catalog was not invoked for scope=%s" (pr-str scope)))
-            (is (identical? universe metabot))))))))
+            (is (not= :unset @captured)
+                (format "metabot-catalog was invoked even for scope=%s" (pr-str scope)))
+            (is (= 1 (get-in metabot  [:dimensions :scale :variables :entity-count :value])))
+            (is (= 2 (get-in universe [:dimensions :scale :variables :entity-count :value])))))))))
 
 (deftest ^:sequential metabot-collection-scope-ids-test
   (testing "nil collection-id returns nil (no Metabot collection scope configured)"
@@ -1136,6 +1145,17 @@
                 "cron tick skipped because the boot run holds the scoring claim")
             (is (= boot-claim (settings/data-complexity-scoring-claim))
                 "boot's claim preserved — cron never took it, so it doesn't clear it")))))))
+
+(deftest ^:sequential current-fingerprint-includes-level-test
+  (testing "changing semantic-complexity-level changes the fingerprint — without this, flipping
+            the level would leave the boot/latest-score path serving a stale snapshot computed at
+            the previous level under the same fingerprint key"
+    (mt/with-temporary-setting-values [semantic-complexity-level 1]
+      (let [fp-at-1 (task.complexity-score/current-fingerprint)]
+        (mt/with-temporary-setting-values [semantic-complexity-level 2]
+          (let [fp-at-2 (task.complexity-score/current-fingerprint)]
+            (is (not= fp-at-1 fp-at-2)
+                "level is part of the fingerprint so a level change re-scores")))))))
 
 (deftest ^:sequential complexity-scores-tags-publish-success-on-result-test
   (testing "complexity-scores stamps publish success/failure via metadata for schedule/boot callers"

@@ -28,9 +28,12 @@
 ;;; actually receives.
 
 (def ^:private ScoredVar
+  ;; `:score` is `[:maybe number?]` — an errored leaf (e.g. embedder outage) cascades nil through
+  ;; the score so a failed run is visibly distinct from a real zero. `:error` carries the exception
+  ;; message in that case; together they let downstream consumers tell the two apart.
   [:map
    [:value  [:maybe number?]]
-   [:score  number?]
+   [:score  [:maybe number?]]
    [:error  {:optional true} string?]])
 
 (def ^:private ValueVar
@@ -38,10 +41,13 @@
    [:value [:maybe some?]]])
 
 (def ^:private DegreeSummary
+  ;; csk's `->snake_case` splits "p50"/"p90" on the digit boundary into `:p_50`/`:p_90`. The
+  ;; complexity engine emits `:p50`/`:p90` internally and `m.util/deep-snake-keys` rewrites them
+  ;; before this schema runs, so the schema must match the post-rewrite shape — not the source.
   [:map
-   [:p50 nat-int?]
-   [:p90 nat-int?]
-   [:max nat-int?]])
+   [:p_50 nat-int?]
+   [:p_90 nat-int?]
+   [:max  nat-int?]])
 
 (def ^:private DegreeSummaryVar
   [:map
@@ -58,7 +64,7 @@
      [:collection_tree_size ScoredVar]
      [:fields_per_entity    ValueVar]
      [:measure_to_dim_ratio ValueVar]]]
-   [:sub_total number?]])
+   [:sub_total [:maybe number?]]])
 
 (def ^:private NominalDim
   [:map
@@ -69,7 +75,7 @@
      [:field_level_collisions  ScoredVar]
      [:name_collisions_density ValueVar]
      [:name_concentration      ValueVar]]]
-   [:sub_total number?]])
+   [:sub_total [:maybe number?]]])
 
 (def ^:private SemanticDim
   [:map
@@ -83,7 +89,7 @@
      [:synonym_clustering_coef    ValueVar]
      [:synonym_avg_degree         ValueVar]
      [:synonym_degree_summary     DegreeSummaryVar]]]
-   [:sub_total number?]])
+   [:sub_total [:maybe number?]]])
 
 (def ^:private MetadataDim
   [:map
@@ -108,7 +114,7 @@
 (def ^:private Catalog
   [:map
    [:dimensions Dimensions]
-   [:total      number?]])
+   [:total      [:maybe number?]]])
 
 (def ^:private EmbeddingModelMeta
   "Identifies the embedding model backing the synonym calculations, so benchmark consumers can pin

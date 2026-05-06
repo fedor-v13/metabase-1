@@ -45,10 +45,16 @@
       (double (/ num denom)))))
 
 (defn sub-total
-  "Sum the `:score` field across the variables in a dimension block (those without `:score`
-  contribute nothing)."
+  "Sum the `:score` field across the variables in a dimension block.
+  Variables that don't carry `:score` (descriptive `value` entries) are excluded. Variables that
+  explicitly set `:score nil` (e.g. an errored leaf — see `metrics.semantic/score`) cascade nil
+  through the sub-total — `score-from-entities`'s catalog total then cascades nil through the
+  catalog `:total` too so a failed leaf is visibly distinct from a real zero. Without this
+  contract a 0 from the failure path would silently low-bias the catalog by ~50 points."
   [variables]
-  (reduce + 0 (keep (comp :score val) variables)))
+  (let [scores (->> variables vals (filter #(contains? % :score)) (map :score))]
+    (when (every? some? scores)
+      (reduce + 0 scores))))
 
 (defn dimension-block
   "Assemble a dimension result from an ordered seq of `[variable-key variable-map]` entries.

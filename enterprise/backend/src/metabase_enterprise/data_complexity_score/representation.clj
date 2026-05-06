@@ -9,7 +9,14 @@
   [[metabase-enterprise.data-complexity-score.complexity]]: it produces library + universe catalog maps
   (each `{:entities [...] :collection-count N}`) matching the same shape `score-from-entities`
   expects, plus a file-backed embedder. Given identical content, scoring via this loader returns
-  the same result as scoring against a live instance."
+  the same result as scoring against a live instance.
+
+  Audit-DB filtering: this loader drops rows whose `database_id` (or `db_id`) equals the runtime
+  constant `metabase.audit-app.core/audit-db-id`. Fixtures must therefore use the same id for their
+  audit content as the running instance, OR carry an `:is_audit true` flag — currently the loader
+  does not honour the flag, so fixtures authored against an instance with a different audit-db
+  id will not have audit rows stripped offline. Matches the format the bundled fixtures use; revise
+  this rule before consuming third-party exports."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -55,8 +62,12 @@
 
 (defn- ->table-entity
   [fields-by-table measures-by-table {:keys [id name description]}]
+  ;; Mirror the live appdb default: `metabase_field.active` is a NOT-NULL column with default
+  ;; `true`, so a fixture entry that omits the key is treated as active. `(filter :active …)`
+  ;; would silently drop those rows; `remove false?` keeps them. Same shape for `:archived`
+  ;; below — defaults to false in the live schema, so a missing key means non-archived.
   (let [active-fields (->> (fields-by-table id)
-                           (filter :active)
+                           (remove #(false? (:active %)))
                            (mapv ->field))]
     {:id            id
      :name          name
@@ -64,7 +75,7 @@
      :description   description
      :field-count   (count active-fields)
      :fields        active-fields
-     :measure-names (mapv :name (remove :archived (measures-by-table id)))}))
+     :measure-names (mapv :name (remove #(true? (:archived %)) (measures-by-table id)))}))
 
 (defn- ->card-entity [{:keys [id name type description]}]
   {:id            id
@@ -130,12 +141,15 @@
         ;; orphan rows on both sides. Library composes on top so library ⊆ universe holds even
         ;; when audit content happens to live in a Library collection.
         non-audit-db?    (fn [id] (and (some? id) (not= id audit/audit-db-id)))
-        universe-table?  (fn [t] (and (:active t)
+        ;; `:active` and `:is_published` default to true in the live appdb schema; `:archived`
+        ;; defaults to false. A fixture that omits a key must therefore inherit the live default
+        ;; — explicit `false`/`true` checks rather than truthy lookups. See `->table-entity`.
+        universe-table?  (fn [t] (and (not (false? (:active t)))
                                       (non-audit-db? (:db_id t))))
         library-table?   (fn [t] (and (universe-table? t)
-                                      (:is_published t)
+                                      (not (false? (:is_published t)))
                                       (contains? lib-coll-ids (:collection_id t))))
-        model-or-metric? (fn [c] (and (not (:archived c))
+        model-or-metric? (fn [c] (and (not (true? (:archived c)))
                                       (contains? #{"model" "metric"} (:type c))))
         universe-card?   (fn [c] (and (model-or-metric? c)
                                       (non-audit-db? (:database_id c))))

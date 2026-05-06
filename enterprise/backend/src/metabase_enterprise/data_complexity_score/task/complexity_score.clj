@@ -28,9 +28,9 @@
 (defn current-fingerprint
   "String capturing everything that changes the meaning of an emitted score.
 
-  Mirrors the Snowplow `formula_version` + `parameters` fields. `weights` is included so re-tuning
-  forces a re-score without a `formula-version` bump; only structural scoring-algorithm changes
-  need that.
+  Mirrors the Snowplow `formula_version` + `parameters` fields. `weights` and `level` are included
+  so re-tuning or flipping the detail level forces a re-score without a `formula-version` bump;
+  only structural scoring-algorithm changes need that.
 
   The synonym-axis fragment comes from [[synonym-source/fingerprint-fragment]] so the fingerprint
   reacts to the source toggle and the configured model — and on the search-index path also picks
@@ -39,6 +39,7 @@
   []
   (pr-str (into (sorted-map)
                 (merge {:formula-version   complexity/formula-version
+                        :level             (settings/effective-level)
                         :synonym-threshold metrics.semantic/synonym-similarity-threshold
                         :weights           {:scale    metrics.scale/weights
                                             :nominal  metrics.nominal/weights

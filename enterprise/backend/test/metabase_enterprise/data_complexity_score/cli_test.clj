@@ -61,7 +61,7 @@
                              :sub-total 100}}}
                 (:universe result))))
       (testing "meta has formula-version + level + threshold; no :embedding-model in offline mode"
-        (is (=? {:formula-version   1
+        (is (=? {:formula-version   complexity/formula-version
                  :level             2
                  :synonym-threshold 0.8}
                 (:meta result)))

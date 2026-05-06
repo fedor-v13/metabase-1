@@ -50,8 +50,12 @@
   "Bump when the scoring formula changes in a way that breaks historical comparisons.
   Swaps of `embedding-model`, `synonym-threshold`, or `text-variant` don't need a bump — they
   already ride in the fingerprint + `:meta` + Snowplow parameters, so downstream readers can
-  diff on those fields directly."
-  1)
+  diff on those fields directly.
+
+  v2 (2026-05): components → 5-axis dimension blocks (scale/nominal/semantic/structural/metadata),
+  group rollups removed, totals exclude metadata, new variables added. Pre-v2 scores are not
+  numerically comparable to v2."
+  2)
 
 ;;; ----------------------------------- enumeration -----------------------------------
 
@@ -191,18 +195,22 @@
                           [:in :report_card.type [:inline ["metric" "model"]]]
                           [:= :report_card.archived false]
                           [:not= :report_card.database_id audit/audit-db-id]]
-                   coll-ids       (conj [:in :report_card.collection_id coll-ids])
-                   verified-only? (conj [:= :mr.status [:inline "verified"]]))
+                   coll-ids (conj [:in :report_card.collection_id coll-ids]))
+        ;; Inner join: a verified-only card must have a matching moderation_review row, so the
+        ;; LEFT JOIN's unmatched-row NULLs would all be discarded by the verified-status predicate
+        ;; anyway. Pinning the status as a join condition (rather than a separate WHERE clause)
+        ;; keeps the intent — "join only verified reviews" — visible in the SQL plan.
         query    (cond-> {:select [:report_card.id :report_card.name :report_card.type
                                    :report_card.description :report_card.card_schema]
                           :from   [[:report_card]]
                           :where  where}
-                   verified-only? (assoc :left-join
+                   verified-only? (assoc :join
                                          [[:moderation_review :mr]
                                           [:and
                                            [:= :mr.moderated_item_id :report_card.id]
                                            [:= :mr.moderated_item_type [:inline "card"]]
-                                           [:= :mr.most_recent true]]]))]
+                                           [:= :mr.most_recent true]
+                                           [:= :mr.status [:inline "verified"]]]]))]
     (into []
           (map ->card-entity)
           (t2/reducible-select :model/Card query))))
@@ -225,11 +233,13 @@
                           [:not= :metabase_table.db_id audit/audit-db-id]]}))
 
 (defn metabot-catalog
-  "Metabot catalog when any Metabot retrieval scope is in effect (verified-only, a collection
-   subtree, or both). Cards are filtered to match Metabot retrieval; Tables are filtered through
-   [[metabot-visible-tables]] so hidden, technical, and routed-DB tables — which Metabot/search
-   never surface — don't inflate the catalog. Collection count is the Metabot scope subtree when
-   present, otherwise the full universe count."
+  "What the internal Metabot can actually surface. Tables go through [[metabot-visible-tables]]
+   (active, non-hidden, non-routed-DB, non-audit) regardless of `scope`, so hidden / technical /
+   routed-DB tables — which Metabot/search never surface — don't inflate the catalog even when
+   the caller has no verified-only / collection scope configured. `scope` adds optional Card
+   filters (`:verified-only?`, `:collection-id`); when both are nil, every model/metric Card on
+   a non-audit DB is in scope, matching Metabot's default retrieval. Collection count is the
+   Metabot scope subtree when present, otherwise the full universe count."
   [scope]
   (let [card-entities (metabot-card-entities scope)
         tables        (metabot-visible-tables)
@@ -240,9 +250,14 @@
 ;;; ------------------------------------- scoring -------------------------------------
 
 (defn- catalog-total
-  "Sum sub-totals across additive dimensions (everything except `:metadata`)."
+  "Sum sub-totals across additive dimensions (everything except `:metadata`).
+  Returns nil when any constituent dimension's sub-total is nil — a failed leaf (e.g. embedder
+  outage) cascades nil through the catalog total so the Snowplow `score` key is omitted rather
+  than silently low-biased by treating the failure as a real zero."
   [dimensions]
-  (reduce + 0 (keep :sub-total (vals (dissoc dimensions :metadata)))))
+  (let [sub-totals (map :sub-total (vals (dissoc dimensions :metadata)))]
+    (when (every? some? sub-totals)
+      (reduce + 0 sub-totals))))
 
 (defn score-catalog
   "Pure: compute the dimension breakdown for a catalog given its `entities`, a context map
@@ -312,13 +327,24 @@
   [event score]
   (cond-> event (some? score) (assoc :score score)))
 
+(defn- weights-by-dimension
+  "Per-dimension weight maps, stringified for Snowplow `parameters` round-trip stability."
+  []
+  {"scale"    (update-keys metrics.scale/weights    snake)
+   "nominal"  (update-keys metrics.nominal/weights  snake)
+   "semantic" (update-keys metrics.semantic/weights snake)})
+
 (defn- parameters-map
   "Sorted-map of scoring inputs likely to evolve, published as a JSON object on each event.
   String keys (top-level and nested) so they round-trip unchanged — Snowplow's `payload` only
   snake-cases top-level keys, and Cheshire would serialize nested keyword keys with their leading
-  colon. `formula_version` stays top-level as the primary cross-version filter."
+  colon. `formula_version` stays top-level as the primary cross-version filter.
+
+  `weights` is included so a tuning change is visible to Snowplow consumers without requiring a
+  `formula_version` bump — matches the `:weights` map already in the fingerprint."
   [{:keys [level synonym-threshold embedding-model text-variant]}]
-  (cond-> (sorted-map "level" level)
+  (cond-> (sorted-map "level"   level
+                      "weights" (weights-by-dimension))
     synonym-threshold (assoc "synonym_threshold" synonym-threshold)
     embedding-model   (assoc "embedding_model_provider" (:provider embedding-model)
                              "embedding_model_name"     (:model-name embedding-model))
@@ -371,7 +397,10 @@
                             `:meta`. Together with `:embedding-model-meta`, pins how the
                             synonym-axis vectors were produced.
     `:metabot-catalog`      optional `{:entities [...] :collection-count N}` for the `:metabot`
-                            catalog. When absent (default), `:metabot` reuses the universe score."
+                            catalog. When absent (e.g. offline CLI scoring without a Metabot),
+                            `:metabot` reuses the universe score. Live scoring builds an explicit
+                            metabot catalog — see [[metabot-catalog]] — so hidden / routed /
+                            technical tables don't inflate the count."
   [{lib-entities :entities lib-coll :collection-count :as _library-catalog}
    {uni-entities :entities uni-coll :collection-count :as _universe-catalog}
    embedder
@@ -404,9 +433,6 @@
 
                      (and (>= ^long level 2) text-variant)
                      (assoc :text-variant text-variant))}))))
-
-(defn- metabot-scope-applies? [{:keys [verified-only? collection-id]}]
-  (or (boolean verified-only?) (some? collection-id)))
 
 (defn- time-phase!
   "Run `f`, record duration on the per-phase histogram labelled by `stage` and `catalog`, return its value."
@@ -461,15 +487,27 @@
             ;; Single enumerate phase. The level-0 short-circuit returns empty catalogs without
             ;; hitting the app-db at all; scoring is timed under a single `"all"` bucket too, so
             ;; one enumerate label and one score label is enough to attribute the whole run.
+            ;;
+            ;; The three catalogs are enumerated independently — each runs its own card+table
+            ;; queries plus a per-catalog `table-fields` / `table-measure-names` pair. An earlier
+            ;; design fetched the universe superset once and derived the library/metabot subsets
+            ;; via in-memory predicates to collapse 3× the field/measure scans into 1×; the
+            ;; per-catalog form was chosen instead because metabot uses table-visibility rules
+            ;; (hidden / routed / non-published) that the universe enumeration deliberately
+            ;; doesn't apply, and re-deriving them in-memory diverges from the live retrieval
+            ;; query. Accept the extra GROUP-BY scans as the cost of catalog accuracy.
             (time-phase! "enumerate" "all"
                          #(if (zero? ^long level)
                             [{:entities [] :collection-count 0}
                              {:entities [] :collection-count 0}
-                             nil]
+                             {:entities [] :collection-count 0}]
+                            ;; Always build the metabot catalog — even with no scope set
+                            ;; (verified-only? + collection-id both nil), it must still apply
+                            ;; `metabot-visible-tables`, which excludes hidden / technical /
+                            ;; routed-DB tables that the universe count includes.
                             [(library-catalog)
                              (universe-catalog)
-                             (when (metabot-scope-applies? metabot-scope)
-                               (metabot-catalog metabot-scope))]))
+                             (metabot-catalog metabot-scope)]))
             result (time-phase! "score" "all"
                                 #(score-from-entities library universe embedder
                                                       {:level                level

@@ -214,12 +214,25 @@
   "Compute the Semantic dimension block.
   `embedder-out` is the already-invoked embedder result (from `embedder-result`) — we take it
   pre-invoked so the orchestrator can share the lookup with the metadata dim's
-  `:embedding-coverage` variable."
+  `:embedding-coverage` variable.
+
+  On embedder error, returns a block whose `:synonym-pairs` carries `:score nil` (and the error
+  string). The nil cascades through `common/sub-total` and the catalog total so a failed run is
+  visibly distinct from a real zero — see the `no zero-fallback on error` contract enforced by
+  `common/sub-total`."
   [entities {:keys [name->vec error]}]
   (if error
-    (update (empty-block) :variables
-            assoc :synonym-pairs (assoc (common/scored (:synonym-pairs weights) 0)
-                                        :error error))
+    ;; Build via `dimension-block` so the cascaded-nil score recomputes the sub-total to nil —
+    ;; `update`-ing the empty-block's variables would leave its pre-computed `:sub-total 0` stale.
+    (common/dimension-block
+     [[:synonym-pairs             {:value nil :score nil :error error}]
+      [:synonym-edge-density      (common/value nil)]
+      [:synonym-components        (common/value 0)]
+      [:synonym-largest-component (common/value 0)]
+      [:synonym-avg-component     (common/value nil)]
+      [:synonym-clustering-coef   (common/value nil)]
+      [:synonym-avg-degree        (common/value nil)]
+      [:synonym-degree-summary    (common/value {:p50 0 :p90 0 :max 0})]])
     (let [vecs (entity-vectors entities name->vec)
           n    (alength vecs)]
       (cond
