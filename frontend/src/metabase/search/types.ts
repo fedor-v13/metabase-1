@@ -36,7 +36,7 @@ export type URLSearchFilterQueryParams = Partial<
   Record<FilterTypeKeys, SearchQueryParamValue>
 >;
 export type SearchAwareLocation = Location<
-  { q?: string } & URLSearchFilterQueryParams
+  { q?: string; page?: string } & URLSearchFilterQueryParams
 >;
 
 export type SearchFilters = Partial<SearchFilterPropTypes>;
