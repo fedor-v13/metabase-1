@@ -253,9 +253,14 @@
   "Sum sub-totals across additive dimensions (everything except `:metadata`).
   Returns nil when any constituent dimension's sub-total is nil — a failed leaf (e.g. embedder
   outage) cascades nil through the catalog total so the Snowplow `score` key is omitted rather
-  than silently low-biased by treating the failure as a real zero."
+  than silently low-biased by treating the failure as a real zero. Mirrors the explicit-key
+  contract used by [[metabase-enterprise.data-complexity-score.metrics.common/sub-total]]: a
+  block missing `:sub-total` outright is skipped (today every dimension-block sets the key,
+  but the explicit guard keeps a future skipped-key block from silently nil-ing the total)."
   [dimensions]
-  (let [sub-totals (map :sub-total (vals (dissoc dimensions :metadata)))]
+  (let [sub-totals (->> (vals (dissoc dimensions :metadata))
+                        (filter #(contains? % :sub-total))
+                        (map :sub-total))]
     (when (every? some? sub-totals)
       (reduce + 0 sub-totals))))
 
