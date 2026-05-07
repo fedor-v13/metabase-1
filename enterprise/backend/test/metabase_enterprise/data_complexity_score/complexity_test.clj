@@ -364,7 +364,7 @@
                                             :embedder nil
                                             :metabot-scope scope)]
             (is (not= :unset @captured)
-                (format "metabot-catalog was invoked even for scope=%s" (pr-str scope)))
+                (format "metabot-catalog was NOT invoked for scope=%s" (pr-str scope)))
             (is (= 1 (get-in metabot  [:dimensions :scale :variables :entity-count :value])))
             (is (= 2 (get-in universe [:dimensions :scale :variables :entity-count :value])))))))))
 

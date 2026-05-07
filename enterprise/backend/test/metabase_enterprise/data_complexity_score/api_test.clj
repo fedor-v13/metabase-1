@@ -277,9 +277,11 @@
                                {:use_verified_content false :collection_id nil}
         (with-redefs [data-complexity-score/record-score! (fn [& _] nil)]
           (let [resp (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)]
-            ;; Compare entity counts only (not full dimension blocks) — both catalogs go through
-            ;; the same scoring pipeline, so once their entity sets agree the rest follows.
-            (is (= (entity-count resp :universe) (entity-count resp :metabot))))))))
+            ;; Full block equality, not just entity-count: both catalogs feed identical entity sets
+            ;; (no hidden/routed/non-published tables exist on this fixture) into the same
+            ;; deterministic scoring pipeline, and metabot's empty-scope `:collection-count` falls
+            ;; back to the universe count, so every dimension and the total must match too.
+            (is (= (:universe resp) (:metabot resp))))))))
   (testing ":metabot is scored separately when :content-verification + use_verified_content are both active"
     ;; Positive path: verified-only filtering restricts Cards to those with an active verified
     ;; moderation review. We inject a fresh unverified Card so the assertion doesn't depend on

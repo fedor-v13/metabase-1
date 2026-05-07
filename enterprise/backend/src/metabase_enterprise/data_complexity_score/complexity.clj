@@ -454,7 +454,7 @@
                :total <long>}
      :universe {…}
      :metabot  {…}
-     :meta     {:formula-version 1
+     :meta     {:formula-version 2
                 :level <int>
                 :synonym-threshold <float>
                 :embedding-model {:provider ... :model-name ...}
