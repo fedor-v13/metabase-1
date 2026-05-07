@@ -161,7 +161,7 @@ export type SdkQuestionProviderProps = PropsWithChildren<
 
 export type SdkQuestionContextType = Omit<
   LoadQuestionHookResult,
-  "loadAndQueryQuestion"
+  "loadAndQueryQuestion" | "restoreQuestionState"
 > &
   Pick<
     SdkQuestionConfig,
