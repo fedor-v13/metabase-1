@@ -24,13 +24,13 @@
         (is (= expected (settings/effective-level))
             (format "raw setting %d should clamp to %d" raw expected))))))
 
-(deftest ^:sequential effective-level-treats-nil-as-zero-test
-  (testing "nil (setting was cleared) returns 0 — default only kicks in via defsetting, not when
-            the setter is called with nil after init"
+(deftest ^:sequential effective-level-falls-back-to-default-after-nil-set-test
+  (testing "after (setter! nil) clears the override, the defsetting default (2) wins —
+            not 0. The setter treats nil as 'unset', so the next read goes through the default,
+            not through `clamp-level`'s nil → 0 fallback (that path only fires for an explicit
+            caller-supplied nil at a level-consuming site)."
     (mt/discard-setting-changes [semantic-complexity-level]
       (settings/semantic-complexity-level! nil)
-      ;; The defsetting default (2) applies when no value has been set; once we've cleared it
-      ;; (set to nil), the setter unsets the override and we fall back to the default.
       (is (= 2 (settings/effective-level))
           "after (setter! nil), defsetting default wins"))))
 

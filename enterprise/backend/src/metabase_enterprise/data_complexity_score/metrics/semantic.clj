@@ -140,14 +140,14 @@
         (double (/ triangles-t3 triples-total))))))
 
 (defn- degree-summary
-  "`{:p50 :p90 :max}` over degrees on `adj`."
+  "`{:p50 :p90 :max}` over degrees on `adj`. Caller (`score`) routes `n=0` and `n=1` to
+  `empty-block`/`singleton-block`, so `n ≥ 2` is a precondition — `(quot n 2)` etc. assume
+  `degrees` is non-empty."
   [^objects adj ^long n]
   (let [degrees (vec (sort (mapv #(count (aget adj %)) (range n))))]
-    (if (zero? n)
-      {:p50 0 :p90 0 :max 0}
-      {:p50 (nth degrees (quot n 2))
-       :p90 (nth degrees (min (dec n) (quot (* n 9) 10)))
-       :max (nth degrees (dec n))})))
+    {:p50 (nth degrees (quot n 2))
+     :p90 (nth degrees (min (dec n) (quot (* n 9) 10)))
+     :max (nth degrees (dec n))}))
 
 ;;; --------------------------------- embedder ------------------------------------
 
@@ -261,9 +261,10 @@
 
 (defn embedding-coverage
   "Fraction of distinct normalized names on `entities` that have an embedding in `name->vec`.
-   Clamped to [0, 1]: an embedder file may contain vectors for names not in this catalog (e.g. a
-   fixture covers both library + universe), so we only count names that are actually present.
-   nil when there are no named entities."
+   Result is in [0, 1] by construction — `covered` counts names appearing in *both* sets, so it
+   never exceeds `(count names-set)`. Vectors in `name->vec` for names not in this catalog (e.g. a
+   shared embeddings file covering library + universe) are simply ignored. nil when there are no
+   named entities."
   [entities {:keys [name->vec error]}]
   (when-not error
     (let [names-set (into #{} (keep (comp common/normalize-name :name)) entities)

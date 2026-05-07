@@ -113,7 +113,30 @@
   (testing "name-collisions-density is collisions/entity-count × 100"
     (let [es [(entity :name "a") (entity :name "a") (entity :name "b") (entity :name "c")]]
       (is (=? {:dimensions {:nominal {:variables {:name-collisions-density {:value 25.0}}}}}
-              (score-entities es nil 1))))))
+              (score-entities es nil 1)))))
+  (testing "name-concentration: empty catalog has no names → nil"
+    (is (=? {:dimensions {:nominal {:variables {:name-concentration {:value nil}}}}}
+            (score-entities [] nil 1))))
+  (testing "name-concentration: a single distinct name (s = 1) is the trivially-even case → 0.0"
+    (let [es [(entity :name "only") (entity :name "only") (entity :name "only")]]
+      (is (=? {:dimensions {:nominal {:variables {:name-concentration {:value 0.0}}}}}
+              (score-entities es nil 1)))))
+  (testing "name-concentration: a perfectly even multi-name distribution → 0.0 (Pielou's J = 1)"
+    (let [es [(entity :name "a") (entity :name "b") (entity :name "c") (entity :name "d")]]
+      (is (=? {:dimensions {:nominal {:variables {:name-concentration {:value 0.0}}}}}
+              (score-entities es nil 1)))))
+  (testing "name-concentration: a skewed distribution gives a known positive value
+            (10 'a's + 1 'b' yields concentration ≈ 0.5306 — derived by hand:
+              p_a = 10/11, p_b = 1/11
+              H = -(10/11·ln(10/11) + 1/11·ln(1/11)) ≈ 0.3046
+              J = H / ln(2) ≈ 0.4395
+              concentration = 1 - J ≈ 0.5605
+            Within 1e-3 — guards both the entropy term and the [0,1] clamp.)"
+    (let [es (concat (repeat 10 (entity :name "a")) [(entity :name "b")])
+          v  (get-in (score-entities es nil 1)
+                     [:dimensions :nominal :variables :name-concentration :value])]
+      (is (number? v))
+      (is (< (Math/abs (- v 0.5605)) 1e-3)))))
 
 (deftest ^:parallel semantic-dim-triangle-plus-isolated-test
   (testing "triangle of similar names + one isolated name yields components=2, largest=3, cluster=1.0"
@@ -219,7 +242,46 @@
       (is (nil? (get-in dimensions [:metadata :sub-total])))
       (is (= total (+ (get-in dimensions [:scale :sub-total])
                       (get-in dimensions [:nominal :sub-total]))))
-      (is (contains? (:metadata dimensions) :coverage)))))
+      (is (contains? (:metadata dimensions) :coverage))))
+  (testing "field-description-coverage is fraction of fields (flattened) with non-blank description"
+    (let [es [(entity :name "a" :fields [{:name "id"   :description "Primary key."}
+                                         {:name "name" :description "  "}
+                                         {:name "age"  :description nil}])
+              (entity :name "b" :fields [{:name "x"    :description "Note."}])]]
+      (is (=? {:dimensions {:metadata {:variables {:field-description-coverage {:value 0.5}}}}}
+              (score-entities es nil 1)))))
+  (testing "field-description-coverage with no fields → nil (undefined ratio)"
+    (let [es [(entity :name "a" :kind :metric)]]
+      (is (=? {:dimensions {:metadata {:variables {:field-description-coverage {:value nil}}}}}
+              (score-entities es nil 1)))))
+  (testing "semantic-type-coverage counts fields whose :semantic-type is truthy"
+    (let [es [(entity :name "a" :fields [{:name "id"      :semantic-type :type/PK}
+                                         {:name "amount"  :semantic-type :type/Income}
+                                         {:name "raw"     :semantic-type nil}])]]
+      (is (=? {:dimensions {:metadata {:variables {:semantic-type-coverage
+                                                   {:value (double (/ 2 3))}}}}}
+              (score-entities es nil 1)))))
+  (testing "embedding-coverage rides through from the semantic dim's pre-computed ratio
+            (level 1 → no embedder run → nil; level 2 with a partial embedder → matching ratio)"
+    (let [es [(entity :name "a") (entity :name "b") (entity :name "c")]]
+      (is (=? {:dimensions {:metadata {:variables {:embedding-coverage {:value nil}}}}}
+              (score-entities es nil 1)))
+      (is (=? {:dimensions {:metadata {:variables {:embedding-coverage
+                                                   {:value (double (/ 2 3))}}}}}
+              (score-entities es (mock-embedder {"a" [1.0 0.0] "b" [0.0 1.0]}) 2)))))
+  (testing "description-quality is the p50 word count over non-empty descriptions
+            (5 / 9 / 13 word lengths sort → index 1 of 3 = 9)"
+    (let [es [(entity :name "a" :description "Short blurb on this table.")
+              (entity :name "b" :description "A longer description spanning seven words for table b.")
+              (entity :name "c" :description "Twelve-word description that wanders on for the sake of testing the metric here.")
+              (entity :name "d" :description "")
+              (entity :name "e" :description nil)]]
+      (is (=? {:dimensions {:metadata {:variables {:description-quality {:value 9}}}}}
+              (score-entities es nil 1)))))
+  (testing "description-quality returns nil when there are no non-empty descriptions"
+    (let [es [(entity :name "a" :description "  ") (entity :name "b" :description nil)]]
+      (is (=? {:dimensions {:metadata {:variables {:description-quality {:value nil}}}}}
+              (score-entities es nil 1))))))
 
 ;;; ----------------------------- level-gated behavior ----------------------------
 
