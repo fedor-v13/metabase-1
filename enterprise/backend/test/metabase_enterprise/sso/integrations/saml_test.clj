@@ -578,6 +578,7 @@
              ;; deactivate the user again
              (t2/update! :model/User :%lower.email "newuser@metabase.com" {:is_active false})
              (testing "We can't reactivate the user if user provisioning is disabled."
+               ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
                #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
                (with-redefs [sso-settings/saml-user-provisioning-enabled? (constantly false)
                              appearance.settings/site-name (constantly "test")]
@@ -729,6 +730,7 @@
   (testing "When user provisioning is disabled, throw an error if we attempt to create a new user."
     (with-other-sso-types-disabled!
       (with-saml-default-setup!
+        ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
         #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
         (with-redefs [sso-settings/saml-user-provisioning-enabled? (constantly false)
                       appearance.settings/site-name (constantly "test")]
@@ -876,7 +878,8 @@
       (with-saml-default-setup!
         (do-with-some-validators-disabled!
          (fn []
-           ;; Mock the saml-response->attributes function to return mixed attribute types
+           ;; Mock the saml-response->attributes function to return mixed attribute types.
+           ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
            #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
            (with-redefs [saml.p/saml-response->attributes
                          (fn [_]
@@ -998,6 +1001,7 @@
                          response    (client/client-real-response :post 302 "/auth/sso" req-options)]
                      (is (successful-login? response)))))
                (testing "an existing user also fails to log in"
+                 ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
                  #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
                  (with-redefs [saml.p/saml-response->attributes
                                (fn [_]
@@ -1018,6 +1022,7 @@
                                                         :name "Tenant McTenantson"
                                                         :is_active false}
                          :model/User {existing-email :email} {:tenant_id tenant-id}]
+            ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
             #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
             (with-redefs [sso-settings/saml-user-provisioning-enabled? (constantly false)]
               (do-with-some-validators-disabled!
@@ -1029,6 +1034,7 @@
                            response    (client/client-real-response :post 401 "/auth/sso" req-options)]
                        (is (not (successful-login? response))))))
                  (testing "an existing user also fails to log in"
+                   ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
                    #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
                    (with-redefs [saml.p/saml-response->attributes
                                  (fn [_]
@@ -1053,6 +1059,7 @@
             (do-with-some-validators-disabled!
              (fn []
                (testing "tenant -> other tenant fails with correct error message"
+                 ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
                  #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
                  (with-redefs [saml.p/saml-response->attributes
                                (fn [_]
@@ -1075,7 +1082,8 @@
                            :model/User {email-with-tenant :email} {:tenant_id tenant-id}]
               (do-with-some-validators-disabled!
                (fn []
-                 ;; Use the regular new-user response which doesn't have tenant attribute
+                 ;; Use the regular new-user response which doesn't have tenant attribute.
+                 ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
                  #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
                  (with-redefs [saml.p/saml-response->attributes
                                (fn [_]
@@ -1097,6 +1105,7 @@
                            :model/User {email-without-tenant :email} {:tenant_id nil}]
               (do-with-some-validators-disabled!
                (fn []
+                 ;; with-redefs (cross-thread): /auth/sso runs on Jetty workers that don't inherit *local-redefs*
                  #_{:clj-kondo/ignore [:metabase/prefer-with-dynamic-fn-redefs]}
                  (with-redefs [saml.p/saml-response->attributes
                                (fn [_]
