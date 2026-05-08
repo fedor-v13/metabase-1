@@ -29,14 +29,24 @@ function SystemPromptPage(props: SystemPromptPageProps) {
   >(settingKey);
 
   return (
-    <SettingsPageWrapper title={title} mt="sm">
-      <SettingsSection>
-        <Text c="text-secondary" size="md" mb="lg">
+    <SettingsPageWrapper
+      title={title}
+      mt="sm"
+      h="calc(100dvh - 8rem)"
+      style={{ overflow: "hidden" }}
+    >
+      <SettingsSection h="100%" mih={0} stackProps={{ h: "100%" }}>
+        <Text c="text-secondary" size="md">
           {description}
         </Text>
         <Textarea
           aria-label={title}
-          className={S.textareaWrapper}
+          autosize={false}
+          classNames={{
+            root: S.textareaRoot,
+            wrapper: S.textareaWrapper,
+            input: S.textareaInput,
+          }}
           onChange={(e) => handleInputChange(e.target.value)}
           placeholder={getPlaceholder()}
           value={inputValue || ""}
