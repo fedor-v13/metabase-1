@@ -820,12 +820,9 @@ describe("MetabotSetup", () => {
 
     await waitFor(() => {
       expect(
-        fetchMock.callHistory
-          .calls("path:/api/metabot/settings")
-          .some(
-            (call) =>
-              call.request?.method === "PUT" || call.options?.method === "PUT",
-          ),
+        fetchMock.callHistory.called("path:/api/metabot/settings", {
+          method: "PUT",
+        }),
       ).toBe(true);
       expect(onClose).toHaveBeenCalledTimes(1);
     });

@@ -1,3 +1,4 @@
+import { useDisclosure } from "@mantine/hooks";
 import { isFulfilled, isRejected } from "@reduxjs/toolkit";
 import cx from "classnames";
 import { useEffect, useState } from "react";
@@ -9,6 +10,7 @@ import _ from "underscore";
 import { useGetSuggestedMetabotPromptsQuery } from "metabase/api";
 import { MetabotLogo } from "metabase/common/components/MetabotLogo";
 import { useSetting } from "metabase/common/hooks";
+import { AIProviderConfigurationModal } from "metabase/metabot/components/AIProviderConfigurationModal";
 import { MetabotPromptInput } from "metabase/metabot/components/MetabotPromptInput";
 import { QueryBuilder } from "metabase/query_builder/containers/QueryBuilder";
 import { useDispatch } from "metabase/redux";
@@ -24,11 +26,7 @@ import {
 } from "metabase/ui";
 import * as Urls from "metabase/urls";
 
-import {
-  useAiProviderConfigurationModal,
-  useMetabotAgent,
-  useUserMetabotPermissions,
-} from "../../hooks";
+import { useMetabotAgent, useUserMetabotPermissions } from "../../hooks";
 import { AIProviderConfigurationNotice } from "../AIProviderConfigurationNotice";
 
 import S from "./MetabotQueryBuilder.module.css";
@@ -62,8 +60,13 @@ const responseHasNavigateTo = (action: SubmitInputResult) =>
 
 const MetabotQueryBuilderInner = () => {
   const { canUseNlq } = useUserMetabotPermissions();
-  const { aiProviderConfigurationModal, openAiProviderConfigurationModal } =
-    useAiProviderConfigurationModal();
+  const [
+    isAiProviderConfigurationModalOpen,
+    {
+      close: closeAiProviderConfigurationModal,
+      open: openAiProviderConfigurationModal,
+    },
+  ] = useDisclosure(false);
 
   const dispatch = useDispatch();
   const {
@@ -264,7 +267,10 @@ const MetabotQueryBuilderInner = () => {
           </Box>
         </Stack>
       </Box>
-      {aiProviderConfigurationModal}
+      <AIProviderConfigurationModal
+        opened={isAiProviderConfigurationModalOpen}
+        onClose={closeAiProviderConfigurationModal}
+      />
     </Box>
   );
 };

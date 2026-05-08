@@ -1,3 +1,4 @@
+import { useDisclosure } from "@mantine/hooks";
 import { useCallback } from "react";
 import { jt, t } from "ttag";
 
@@ -6,7 +7,7 @@ import { dismissUndo } from "metabase/redux/undo";
 import { canAccessSettings } from "metabase/selectors/user";
 import { Anchor, Flex, Text, type TextProps } from "metabase/ui";
 
-import { useAiProviderConfigurationModal } from "../hooks";
+import { AIProviderConfigurationModal } from "./AIProviderConfigurationModal";
 
 export function AIProviderConfigurationNotice({
   featureName,
@@ -34,6 +35,7 @@ export function AIProviderConfigurationNotice({
               key="configure-ai-link"
               component="button"
               type="button"
+              fz="inherit"
               inline
               onClick={onConfigureAi}
             >
@@ -58,17 +60,19 @@ const MetabotNotConfiguredToastContent = ({
     dispatch(dismissUndo({ undoId: METABOT_NOT_CONFIGURED_TOAST_ID }));
   }, [dispatch]);
 
-  const { aiProviderConfigurationModal, openAiProviderConfigurationModal } =
-    useAiProviderConfigurationModal({ onClose: dismissToast });
+  const [isModalOpen, { close: closeModal, open: openModal }] = useDisclosure(
+    false,
+    { onClose: dismissToast },
+  );
 
   return (
     <Flex direction="column" gap="xs">
       <AIProviderConfigurationNotice
         inline={true}
-        onConfigureAi={openAiProviderConfigurationModal}
+        onConfigureAi={openModal}
         featureName={featureName}
       />
-      {aiProviderConfigurationModal}
+      <AIProviderConfigurationModal opened={isModalOpen} onClose={closeModal} />
     </Flex>
   );
 };
@@ -80,7 +84,8 @@ export const getMetabotNotConfiguredToastProps = ({
 }) => ({
   id: METABOT_NOT_CONFIGURED_TOAST_ID,
   dark: false,
-  icon: null,
+  icon: "metabot" as const,
+  iconColor: "brand" as const,
   toastColor: "error",
   dismissIconColor: "text-secondary" as const,
   timeout: 0,

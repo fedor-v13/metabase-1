@@ -53,7 +53,7 @@ import { usePurchaseMetabaseManagedAi } from "../../usePurchaseMetabaseManagedAi
 import { MetabotSettingUpModal } from "./MetabotSettingUpModal";
 
 export function MetabaseAIProviderSetup({
-  onClose,
+  onConnect,
 }: MetabaseAIProviderSetupProps) {
   const offerMetabaseManagedAi = !!hasPremiumFeature(
     OFFER_METABASE_MANAGED_AI_FEATURE,
@@ -72,8 +72,8 @@ export function MetabaseAIProviderSetup({
 
   const handleConnect = useCallback(async () => {
     await updateMetabotSettings({ provider: "metabase", model: "" }).unwrap();
-    onClose?.();
-  }, [onClose, updateMetabotSettings]);
+    onConnect?.();
+  }, [onConnect, updateMetabotSettings]);
 
   const {
     pricing: metabaseManagedAiPricing,
@@ -102,7 +102,7 @@ export function MetabaseAIProviderSetup({
     }
   }, [handleConnect, hasAcceptedTerms, metabaseManagedAiPurchase]);
 
-  const onConnect = match({
+  const connectAction = match({
     hasAcceptedTerms,
     hasMetabaseManagedAiProviderFeature,
     hasDeprecatedMetabaseAiProvider,
@@ -165,7 +165,7 @@ export function MetabaseAIProviderSetup({
   ]);
 
   const { isLoading, handleDisconnect, resetProvider, isModal } =
-    useMetabotSetupContext(onConnect, onDisconnect);
+    useMetabotSetupContext(connectAction, onDisconnect);
 
   const metabaseManagedAiPurchaseError = metabaseManagedAiPurchase.error
     ? getErrorMessage(

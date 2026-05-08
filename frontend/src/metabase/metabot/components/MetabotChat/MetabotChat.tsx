@@ -1,3 +1,4 @@
+import { useDisclosure } from "@mantine/hooks";
 import cx from "classnames";
 import { useMemo } from "react";
 import { t } from "ttag";
@@ -5,6 +6,7 @@ import { t } from "ttag";
 import EmptyDashboardBot from "assets/img/dashboard-empty.svg?component";
 import { useGetSuggestedMetabotPromptsQuery } from "metabase/api";
 import { useSetting } from "metabase/common/hooks";
+import { AIProviderConfigurationModal } from "metabase/metabot/components/AIProviderConfigurationModal";
 import { AIProviderConfigurationNotice } from "metabase/metabot/components/AIProviderConfigurationNotice";
 import { MetabotResetLongChatButton } from "metabase/metabot/components/MetabotChat/MetabotResetLongChatButton";
 import { useSelector } from "metabase/redux";
@@ -22,7 +24,6 @@ import {
 } from "metabase/ui";
 
 import {
-  useAiProviderConfigurationModal,
   useMetabotAgent,
   useMetabotName,
   useUserMetabotPermissions,
@@ -53,16 +54,20 @@ export const MetabotChat = ({
   config?: MetabotConfig;
 }) => {
   const isHosted = useSelector(getIsHosted);
-  const { aiProviderConfigurationModal, openAiProviderConfigurationModal } =
-    useAiProviderConfigurationModal();
+  const [
+    isAiProviderConfigurationModalOpen,
+    {
+      close: closeAiProviderConfigurationModal,
+      open: openAiProviderConfigurationModal,
+    },
+  ] = useDisclosure(false);
   const metabot = useMetabotAgent(config.agentId);
   const metabotName = useMetabotName();
   const { isConfigured } = useUserMetabotPermissions();
   const showIllustrations = useSetting("metabot-show-illustrations");
 
   const hasMessages =
-    isConfigured &&
-    (metabot.messages.length > 0 || metabot.errorMessages.length > 0);
+    metabot.messages.length > 0 || metabot.errorMessages.length > 0;
 
   const { scrollContainerRef, headerRef, fillerRef } =
     useScrollManager(hasMessages);
@@ -233,7 +238,10 @@ export const MetabotChat = ({
           </Paper>
         </Box>
       )}
-      {aiProviderConfigurationModal}
+      <AIProviderConfigurationModal
+        opened={isAiProviderConfigurationModalOpen}
+        onClose={closeAiProviderConfigurationModal}
+      />
     </Box>
   );
 };

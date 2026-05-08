@@ -1,13 +1,13 @@
+import { useDisclosure } from "@mantine/hooks";
 import { useCallback, useEffect, useRef } from "react";
 import { tinykeys } from "tinykeys";
-import { match } from "ts-pattern";
 import { t } from "ttag";
 
 import type { MetabotPromptInputRef } from "metabase/metabot";
+import { AIProviderConfigurationModal } from "metabase/metabot/components/AIProviderConfigurationModal";
 import { MetabotManagedProviderLimitHoverCard } from "metabase/metabot/components/MetabotManagedProviderLimit";
 import { MetabotPromptInput } from "metabase/metabot/components/MetabotPromptInput";
 import {
-  useAiProviderConfigurationModal,
   useMetabotName,
   useUserMetabotPermissions,
 } from "metabase/metabot/hooks";
@@ -46,8 +46,13 @@ export const MetabotInlineSQLPrompt = ({
   onValueChange,
 }: MetabotInlineSQLPromptProps) => {
   const promptInputRef = useRef<MetabotPromptInputRef>(null);
-  const { aiProviderConfigurationModal, openAiProviderConfigurationModal } =
-    useAiProviderConfigurationModal();
+  const [
+    isAiProviderConfigurationModalOpen,
+    {
+      close: closeAiProviderConfigurationModal,
+      open: openAiProviderConfigurationModal,
+    },
+  ] = useDisclosure(false);
   const { canUseSqlGeneration } = useUserMetabotPermissions();
   const metabotName = useMetabotName();
 
@@ -84,32 +89,32 @@ export const MetabotInlineSQLPrompt = ({
 
   return (
     <Box className={S.container} data-testid="metabot-inline-sql-prompt">
-      {match({ canUseSqlGeneration })
-        .with({ canUseSqlGeneration: false }, () => (
-          <AIProviderConfigurationNotice
-            inline
-            featureName={t`SQL generation`}
-            onConfigureAi={openAiProviderConfigurationModal}
+      {!canUseSqlGeneration ? (
+        <AIProviderConfigurationNotice
+          inline
+          featureName={t`SQL generation`}
+          fz="sm"
+          p="0.25rem 0.125rem"
+          ff="var(--mb-default-font-family)"
+          onConfigureAi={openAiProviderConfigurationModal}
+        />
+      ) : (
+        <Box className={S.inputContainer}>
+          <MetabotPromptInput
+            ref={promptInputRef}
+            value={value}
+            placeholder={t`Describe what SQL you want, type @ to mention an item.`}
+            autoFocus
+            disabled={isLoading}
+            onChange={onValueChange}
+            onStop={handleClose}
+            suggestionConfig={{
+              suggestionModels,
+              onlyDatabaseId: databaseId ?? undefined,
+            }}
           />
-        ))
-        .with({ canUseSqlGeneration: true }, () => (
-          <Box className={S.inputContainer}>
-            <MetabotPromptInput
-              ref={promptInputRef}
-              value={value}
-              placeholder={t`Describe what SQL you want, type @ to mention an item.`}
-              autoFocus
-              disabled={isLoading}
-              onChange={onValueChange}
-              onStop={handleClose}
-              suggestionConfig={{
-                suggestionModels,
-                onlyDatabaseId: databaseId ?? undefined,
-              }}
-            />
-          </Box>
-        ))
-        .exhaustive()}
+        </Box>
+      )}
 
       <Flex justify="space-between" align="center" gap="sm" mt="xs">
         <Box data-testid="metabot-inline-sql-error" w="100%" fz="sm" c="error">
@@ -156,7 +161,10 @@ export const MetabotInlineSQLPrompt = ({
           </Button>
         </Flex>
       </Flex>
-      {aiProviderConfigurationModal}
+      <AIProviderConfigurationModal
+        opened={isAiProviderConfigurationModalOpen}
+        onClose={closeAiProviderConfigurationModal}
+      />
     </Box>
   );
 };

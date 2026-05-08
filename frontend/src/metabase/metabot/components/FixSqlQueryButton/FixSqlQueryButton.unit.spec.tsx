@@ -1,37 +1,22 @@
 import userEvent from "@testing-library/user-event";
 
 import { renderWithProviders, screen } from "__support__/ui";
-import { useToast } from "metabase/common/hooks/use-toast";
 import { METABOT_ERR_MSG } from "metabase/metabot/constants";
 import {
   useMetabotAgent,
   useUserMetabotPermissions,
 } from "metabase/metabot/hooks";
 import { setIsNativeEditorOpen } from "metabase/query_builder/actions";
-import { useDispatch } from "metabase/redux";
 
 import { trackQueryFixClicked } from "../../analytics";
-import { getMetabotNotConfiguredToastProps } from "../AIProviderConfigurationNotice";
 
 import { FixSqlQueryButton } from "./FixSqlQueryButton";
 
 const mockSubmitInput = jest.fn();
-const mockDispatch = jest.fn();
-const mockSendToast = jest.fn();
 const mockSetIsNativeEditorOpen = jest.fn();
 
 jest.mock("../../analytics", () => ({
   trackQueryFixClicked: jest.fn(),
-}));
-
-jest.mock("metabase/redux", () => ({
-  ...jest.requireActual("metabase/redux"),
-  useDispatch: jest.fn(),
-}));
-
-jest.mock("metabase/common/hooks/use-toast", () => ({
-  ...jest.requireActual("metabase/common/hooks/use-toast"),
-  useToast: jest.fn(),
 }));
 
 jest.mock("metabase/metabot/hooks", () => ({
@@ -74,20 +59,17 @@ function setup(options?: {
     submitInput: mockSubmitInput,
     isDoingScience,
   } as any);
-  jest.mocked(useToast).mockReturnValue([mockSendToast, jest.fn()]);
-  jest.mocked(useDispatch).mockReturnValue(mockDispatch as any);
   jest
     .mocked(setIsNativeEditorOpen)
     .mockImplementation(mockSetIsNativeEditorOpen as any);
 
-  return renderWithProviders(<FixSqlQueryButton />);
+  return renderWithProviders(<FixSqlQueryButton />, { withUndos: true });
 }
 
 describe("FixSqlQueryButton", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSubmitInput.mockResolvedValue(undefined);
-    mockDispatch.mockImplementation((action) => action);
     mockSetIsNativeEditorOpen.mockReturnValue({
       type: "metabase/qb/SET_IS_NATIVE_EDITOR_OPEN",
       isNativeEditorOpen: true,
@@ -118,31 +100,16 @@ describe("FixSqlQueryButton", () => {
   });
 
   it("shows the not-configured toast instead of starting SQL fixing when Metabot is not configured", async () => {
-    const expectedToast = getMetabotNotConfiguredToastProps({
-      featureName: "Metabot",
-    });
-
     setup({ canUseSqlGeneration: false, hasSqlGenerationAccess: true });
 
     await userEvent.click(
       screen.getByRole("button", { name: /Have Metabot fix it/ }),
     );
 
-    expect(mockSendToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: expectedToast.id,
-        dark: expectedToast.dark,
-        icon: expectedToast.icon,
-        toastColor: expectedToast.toastColor,
-        dismissIconColor: expectedToast.dismissIconColor,
-        timeout: expectedToast.timeout,
-        style: expectedToast.style,
-        renderChildren: expect.any(Function),
-      }),
-    );
+    expect(await screen.findByTestId("toast-undo")).toBeInTheDocument();
+    expect(await screen.findByText(/connect to a model/)).toBeInTheDocument();
     expect(trackQueryFixClicked).not.toHaveBeenCalled();
     expect(mockSetIsNativeEditorOpen).not.toHaveBeenCalled();
-    expect(mockDispatch).not.toHaveBeenCalled();
     expect(mockSubmitInput).not.toHaveBeenCalled();
   });
 
@@ -155,10 +122,6 @@ describe("FixSqlQueryButton", () => {
 
     expect(trackQueryFixClicked).toHaveBeenCalled();
     expect(mockSetIsNativeEditorOpen).toHaveBeenCalledWith(true);
-    expect(mockDispatch).toHaveBeenCalledWith({
-      type: "metabase/qb/SET_IS_NATIVE_EDITOR_OPEN",
-      isNativeEditorOpen: true,
-    });
     expect(mockSubmitInput).toHaveBeenCalledWith("Fix this SQL query", {
       preventOpenSidebar: true,
     });
@@ -192,14 +155,9 @@ describe("FixSqlQueryButton", () => {
       screen.getByRole("button", { name: /Have Metabot fix it/ }),
     );
 
-    expect(mockSendToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "metabot-managed-provider-limit",
-        icon: null,
-        timeout: 0,
-        toastColor: "error",
-      }),
-    );
+    expect(
+      await screen.findByText("You've run out of AI service tokens"),
+    ).toBeInTheDocument();
   });
 
   it("shows the error when fixing SQL fails", async () => {
@@ -220,11 +178,7 @@ describe("FixSqlQueryButton", () => {
       screen.getByRole("button", { name: /Have Metabot fix it/ }),
     );
 
-    expect(mockSendToast).toHaveBeenCalledWith({
-      icon: "warning",
-      toastColor: "error",
-      message: "Something went wrong",
-    });
+    expect(await screen.findByText("Something went wrong")).toBeInTheDocument();
   });
 
   it("falls back to the default Metabot error message when none is returned", async () => {
@@ -241,10 +195,8 @@ describe("FixSqlQueryButton", () => {
       screen.getByRole("button", { name: /Have Metabot fix it/ }),
     );
 
-    expect(mockSendToast).toHaveBeenCalledWith({
-      icon: "warning",
-      toastColor: "error",
-      message: METABOT_ERR_MSG.default,
-    });
+    expect(
+      await screen.findByText(METABOT_ERR_MSG.default),
+    ).toBeInTheDocument();
   });
 });

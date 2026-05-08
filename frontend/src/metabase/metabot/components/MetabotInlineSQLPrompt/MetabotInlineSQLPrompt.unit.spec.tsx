@@ -52,9 +52,7 @@ describe("MetabotInlineSQLPrompt", () => {
     setup();
 
     expect(
-      screen.getByText("To use SQL generation, please", {
-        exact: false,
-      }),
+      screen.getByText(/To use SQL generation, please/),
     ).toBeInTheDocument();
     expect(
       screen.queryByTestId("metabot-inline-sql-generate"),

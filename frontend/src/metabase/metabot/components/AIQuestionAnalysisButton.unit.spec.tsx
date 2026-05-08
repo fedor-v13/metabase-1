@@ -5,19 +5,11 @@ import { setupUserMetabotPermissionsEndpoint } from "__support__/server-mocks";
 import { mockSettings } from "__support__/settings";
 import { renderWithProviders, screen, waitFor } from "__support__/ui";
 import { mockStreamedEndpoint } from "metabase/api/ai-streaming/test-utils";
-import { useToast } from "metabase/common/hooks/use-toast";
 import { MetabotProvider } from "metabase/metabot/context";
 import { getMetabotInitialState } from "metabase/metabot/state/reducer-utils";
 import { createMockState } from "metabase/redux/store/mocks";
 
 import { AIQuestionAnalysisButton } from "./AIQuestionAnalysisButton";
-
-const mockSendToast = jest.fn();
-
-jest.mock("metabase/common/hooks/use-toast", () => ({
-  ...jest.requireActual("metabase/common/hooks/use-toast"),
-  useToast: jest.fn(),
-}));
 
 const mockAgentEndpoint = () =>
   mockStreamedEndpoint("/api/metabot/agent-streaming", {
@@ -38,7 +30,6 @@ function setup({
 
   setupUserMetabotPermissionsEndpoint();
   setupEnterprisePlugins();
-  jest.mocked(useToast).mockReturnValue([mockSendToast, jest.fn()]);
 
   const metabotState = getMetabotInitialState();
 
@@ -51,6 +42,7 @@ function setup({
         settings,
         metabot: metabotState,
       } as any),
+      withUndos: true,
     },
   );
 }
@@ -104,21 +96,8 @@ describe("AIQuestionAnalysisButton", () => {
       await screen.findByRole("button", { name: "Explain this chart" }),
     );
 
-    expect(mockSendToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "metabot-not-configured",
-        dark: false,
-        icon: null,
-        toastColor: "error",
-        dismissIconColor: "text-secondary",
-        timeout: 0,
-        style: {
-          padding: "1rem",
-          width: "min(24rem, calc(100vw - 2 * var(--mantine-spacing-md)))",
-        },
-        renderChildren: expect.any(Function),
-      }),
-    );
+    expect(await screen.findByTestId("toast-undo")).toBeInTheDocument();
+    expect(await screen.findByText(/connect to a model/)).toBeInTheDocument();
     expect(agentSpy).not.toHaveBeenCalled();
   });
 });

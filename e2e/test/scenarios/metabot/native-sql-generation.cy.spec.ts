@@ -27,7 +27,7 @@ describe("Native SQL generation", () => {
     toggleInlineSQLPrompt();
     inlinePrompt().should("be.visible");
     inlinePrompt()
-      .findByText("To use SQL generation, please", { exact: false })
+      .findByText(/To use SQL generation, please/)
       .should("be.visible");
     generateButton().should("not.exist");
 

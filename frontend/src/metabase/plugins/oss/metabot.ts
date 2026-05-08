@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 import { PluginPlaceholder } from "metabase/plugins/components/PluginPlaceholder";
 
 export type MetabaseAIProviderSetupProps = {
-  onClose?: VoidFunction;
+  onConnect?: VoidFunction;
 };
 
 const getDefaultPluginMetabot = () => ({
