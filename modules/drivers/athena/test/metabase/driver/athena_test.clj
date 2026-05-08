@@ -37,7 +37,7 @@
 
 (deftest sync-test
   (testing "sync with nested fields"
-    (with-redefs [athena/run-query (constantly nested-schema)]
+    (mt/with-dynamic-fn-redefs [athena/run-query (constantly nested-schema)]
       (is (= #{{:name              "key"
                 :base-type         :type/Integer
                 :database-type     "int"
@@ -298,10 +298,10 @@
               (is (not-empty (:fields (driver/describe-table :athena db table)))))
             (testing "`describe-table-fields` uses DESCRIBE if the JDBC driver returns duplicate column names (#58441)"
               (let [get-columns-called (volatile! false)]
-                (with-redefs [athena/get-columns (fn [& _]
-                                                   (vreset! get-columns-called true)
-                                                   [{:column_name "c" :type_name "bigint"}
-                                                    {:column_name "c" :type_name "string"}])]
+                (mt/with-dynamic-fn-redefs [athena/get-columns (fn [& _]
+                                                                 (vreset! get-columns-called true)
+                                                                 [{:column_name "c" :type_name "bigint"}
+                                                                  {:column_name "c" :type_name "string"}])]
                   (is (= #{{:database-position 0, :name "id", :database-type "int", :base-type :type/Integer}
                            {:database-position 1, :name "name", :database-type "string", :base-type :type/Text}
                            {:database-position 2, :name "code", :database-type "string", :base-type :type/Text}

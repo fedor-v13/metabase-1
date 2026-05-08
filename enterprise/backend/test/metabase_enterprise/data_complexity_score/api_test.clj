@@ -109,12 +109,12 @@
 (deftest complexity-endpoint-force-recalculation-returns-fresh-score-test
   (testing "superusers can trigger the expensive recompute path on demand"
     (let [persisted? (atom nil)]
-      (with-redefs [metabot-scope/internal-metabot-scope      (constantly {})
-                    task.complexity-score/current-fingerprint (constantly "api-test-fp")
-                    complexity/complexity-scores              (fn [& _] sample-score)
-                    data-complexity-score/record-score!       (fn [fingerprint stored-score]
-                                                                (reset! persisted? [fingerprint stored-score])
-                                                                (with-sample-calculated-at stored-score))]
+      (mt/with-dynamic-fn-redefs [metabot-scope/internal-metabot-scope      (constantly {})
+                                  task.complexity-score/current-fingerprint (constantly "api-test-fp")
+                                  complexity/complexity-scores              (fn [& _] sample-score)
+                                  data-complexity-score/record-score!       (fn [fingerprint stored-score]
+                                                                              (reset! persisted? [fingerprint stored-score])
+                                                                              (with-sample-calculated-at stored-score))]
         (is (= (m.util/deep-snake-keys (with-sample-calculated-at sample-score))
                (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)))
         (is (= ["api-test-fp" sample-score] @persisted?))))))
@@ -122,13 +122,13 @@
 (deftest ^:sequential complexity-endpoint-force-recalculation-advances-last-fingerprint-on-snowplow-publish-test
   (testing "force recalculation mirrors the scheduled path's fingerprint gate — advance only when Snowplow accepted the event"
     (mt/with-temporary-setting-values [data-complexity-scoring-last-fingerprint "stale"]
-      (with-redefs [metabot-scope/internal-metabot-scope      (constantly {})
-                    task.complexity-score/current-fingerprint (constantly "refresh-fp")
-                    data-complexity-score/record-score!       (fn [& _] nil)
-                    complexity/complexity-scores
-                    (fn [& _]
-                      (with-meta sample-score
-                                 {::complexity/snowplow-published? true}))]
+      (mt/with-dynamic-fn-redefs [metabot-scope/internal-metabot-scope      (constantly {})
+                                  task.complexity-score/current-fingerprint (constantly "refresh-fp")
+                                  data-complexity-score/record-score!       (fn [& _] nil)
+                                  complexity/complexity-scores
+                                  (fn [& _]
+                                    (with-meta sample-score
+                                               {::complexity/snowplow-published? true}))]
         (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)
         (is (= "refresh-fp" (data-complexity-score.settings/data-complexity-scoring-last-fingerprint))
             "successful Snowplow publish must advance the last-fingerprint so the next boot doesn't redundantly re-score")))))
@@ -136,13 +136,13 @@
 (deftest ^:sequential complexity-endpoint-force-recalculation-keeps-fingerprint-stale-when-snowplow-publish-fails-test
   (testing "force recalculation leaves the fingerprint stale when Snowplow didn't accept the event, so the next scheduled run retries"
     (mt/with-temporary-setting-values [data-complexity-scoring-last-fingerprint "stale"]
-      (with-redefs [metabot-scope/internal-metabot-scope      (constantly {})
-                    task.complexity-score/current-fingerprint (constantly "refresh-fp")
-                    data-complexity-score/record-score!       (fn [& _] nil)
-                    complexity/complexity-scores
-                    (fn [& _]
-                      (with-meta sample-score
-                                 {::complexity/snowplow-published? false}))]
+      (mt/with-dynamic-fn-redefs [metabot-scope/internal-metabot-scope      (constantly {})
+                                  task.complexity-score/current-fingerprint (constantly "refresh-fp")
+                                  data-complexity-score/record-score!       (fn [& _] nil)
+                                  complexity/complexity-scores
+                                  (fn [& _]
+                                    (with-meta sample-score
+                                               {::complexity/snowplow-published? false}))]
         (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)
         (is (= "stale" (data-complexity-score.settings/data-complexity-scoring-last-fingerprint))
             "failed publish must preserve the stale fingerprint — same semantics as the scheduled path")))))
@@ -150,10 +150,10 @@
 (deftest complexity-endpoint-force-recalculation-runs-when-scheduled-scoring-disabled-test
   (testing "manual force recalculation does not reuse the scheduled scorer's enabled gate"
     (mt/with-temporary-setting-values [data-complexity-scoring-enabled false]
-      (with-redefs [metabot-scope/internal-metabot-scope      (constantly {})
-                    task.complexity-score/current-fingerprint (constantly "api-test-fp")
-                    complexity/complexity-scores              (fn [& _] sample-score)
-                    data-complexity-score/record-score!       (fn [& _] nil)]
+      (mt/with-dynamic-fn-redefs [metabot-scope/internal-metabot-scope      (constantly {})
+                                  task.complexity-score/current-fingerprint (constantly "api-test-fp")
+                                  complexity/complexity-scores              (fn [& _] sample-score)
+                                  data-complexity-score/record-score!       (fn [& _] nil)]
         (is (= (m.util/deep-snake-keys sample-score)
                (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)))))))
 
@@ -165,7 +165,7 @@
     ;; same vector across catalogs preserves the library ⊆ universe pair invariant.
     (mt/with-dynamic-fn-redefs [synonym-source/complexity-scores-opts
                                 (constantly {:embedder random-synonym-embedder})]
-      (with-redefs [data-complexity-score/record-score! (fn [& _] nil)]
+      (mt/with-dynamic-fn-redefs [data-complexity-score/record-score! (fn [& _] nil)]
         (let [resp             (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)
               measurement      (fn [cat k] (get-in resp [cat :components k :measurement]))
               component-score  (fn [cat k] (get-in resp [cat :components k :score]))
@@ -209,7 +209,7 @@
     (mt/with-premium-features #{}
       (mt/with-temp-vals-in-db :model/Metabot (internal-metabot-id)
                                {:use_verified_content false :collection_id nil}
-        (with-redefs [data-complexity-score/record-score! (fn [& _] nil)]
+        (mt/with-dynamic-fn-redefs [data-complexity-score/record-score! (fn [& _] nil)]
           (let [resp (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)]
             (is (= (:universe resp) (:metabot resp))))))))
   (testing ":metabot is scored separately when :content-verification + use_verified_content are both active"
@@ -224,7 +224,7 @@
                                                  :archived    false}]
         (mt/with-temp-vals-in-db :model/Metabot (internal-metabot-id)
                                  {:use_verified_content true :collection_id nil}
-          (with-redefs [data-complexity-score/record-score! (fn [& _] nil)]
+          (mt/with-dynamic-fn-redefs [data-complexity-score/record-score! (fn [& _] nil)]
             (let [resp (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)]
               (is (< (get-in resp [:metabot  :components :entity_count :measurement])
                      (get-in resp [:universe :components :entity_count :measurement]))
@@ -271,7 +271,7 @@
                                   (mt/with-temp-vals-in-db :model/Metabot (internal-metabot-id)
                                                            {:use_verified_content false
                                                             :collection_id cid}
-                                    (with-redefs [data-complexity-score/record-score! (fn [& _] nil)]
+                                    (mt/with-dynamic-fn-redefs [data-complexity-score/record-score! (fn [& _] nil)]
                                       (let [resp (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)]
                                         {:metabot  (get-in resp [:metabot  :components :entity_count :measurement])
                                          :universe (get-in resp [:universe :components :entity_count :measurement])}))))
@@ -320,13 +320,13 @@
                                 :owner       "scheduled-owner"})
           scoring-ran? (atom false)]
       (mt/with-temporary-setting-values [data-complexity-scoring-claim active-claim]
-        (with-redefs [metabot-scope/internal-metabot-scope      (constantly {})
-                      task.complexity-score/current-fingerprint (constantly "api-test-fp")
-                      data-complexity-score/record-score!       (fn [& _] nil)
-                      complexity/complexity-scores
-                      (fn [& _]
-                        (reset! scoring-ran? true)
-                        stub-scores)]
+        (mt/with-dynamic-fn-redefs [metabot-scope/internal-metabot-scope      (constantly {})
+                                    task.complexity-score/current-fingerprint (constantly "api-test-fp")
+                                    data-complexity-score/record-score!       (fn [& _] nil)
+                                    complexity/complexity-scores
+                                    (fn [& _]
+                                      (reset! scoring-ran? true)
+                                      stub-scores)]
           (is (= (m.util/deep-snake-keys stub-scores)
                  (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true)))
           (is (true? @scoring-ran?)
@@ -341,15 +341,15 @@
     (let [release-scoring (CountDownLatch. 1)
           scoring-started (CountDownLatch. 1)
           call-count      (atom 0)]
-      (with-redefs [metabot-scope/internal-metabot-scope      (constantly {})
-                    task.complexity-score/current-fingerprint (constantly "api-test-fp")
-                    data-complexity-score/record-score!       (fn [& _] nil)
-                    complexity/complexity-scores
-                    (fn [& _]
-                      (swap! call-count inc)
-                      (.countDown scoring-started)
-                      (.await release-scoring 10 TimeUnit/SECONDS)
-                      stub-scores)]
+      (mt/with-dynamic-fn-redefs [metabot-scope/internal-metabot-scope      (constantly {})
+                                  task.complexity-score/current-fingerprint (constantly "api-test-fp")
+                                  data-complexity-score/record-score!       (fn [& _] nil)
+                                  complexity/complexity-scores
+                                  (fn [& _]
+                                    (swap! call-count inc)
+                                    (.countDown scoring-started)
+                                    (.await release-scoring 10 TimeUnit/SECONDS)
+                                    stub-scores)]
         (let [first-request (future (mt/user-http-request :crowberto :get 200 endpoint :force-recalculation true))]
           (try
             (is (.await scoring-started 10 TimeUnit/SECONDS)
