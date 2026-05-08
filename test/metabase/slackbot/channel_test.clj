@@ -3,13 +3,14 @@
    [clojure.test :refer :all]
    [metabase.metabot.persistence :as metabot.persistence]
    [metabase.slackbot.channel :as slackbot.channel]
-   [metabase.slackbot.client :as slackbot.client]))
+   [metabase.slackbot.client :as slackbot.client]
+   [metabase.test :as mt]))
 
 (deftest channel-response-passes-slack-metadata-for-deep-linking-test
   (let [request-opts (atom nil)]
-    (with-redefs [slackbot.client/set-status (constantly {:ok true})
-                  slackbot.client/post-thread-reply (constantly {:ok true :ts "1700000000.000002"})
-                  metabot.persistence/set-response-slack-msg-id! (constantly nil)]
+    (mt/with-dynamic-fn-redefs [slackbot.client/set-status (constantly {:ok true})
+                                slackbot.client/post-thread-reply (constantly {:ok true :ts "1700000000.000002"})
+                                metabot.persistence/set-response-slack-msg-id! (constantly nil)]
       (slackbot.channel/send-channel-response
        {}
        {:ts "1700000000.000001"}

@@ -41,17 +41,17 @@
 
 (deftest thread->history-strips-bot-mentions-test
   (testing "User messages have bot mentions stripped"
-    (with-redefs [slackbot.persistence/message-history (constantly {})]
+    (mt/with-dynamic-fn-redefs [slackbot.persistence/message-history (constantly {})]
       (let [thread {:messages [{:ts "1709567890.000001" :text "<@UBOT123> hello" :user "U123"}]}
             result (#'slackbot.streaming/thread->history thread "UBOT123" "conv-123")]
         (is (= [{:role :user :content "hello"}] result))))))
 
 (deftest thread->history-merges-tool-calls-test
   (testing "Bot messages include tool call data from DB before text"
-    (with-redefs [slackbot.persistence/message-history
-                  (constantly {"1709567890.000002"
-                               [{:role :assistant :tool_calls [{:id "tc1" :name "run_query"}]}
-                                {:role :tool :tool_call_id "tc1" :content "42"}]})]
+    (mt/with-dynamic-fn-redefs [slackbot.persistence/message-history
+                                (constantly {"1709567890.000002"
+                                             [{:role :assistant :tool_calls [{:id "tc1" :name "run_query"}]}
+                                              {:role :tool :tool_call_id "tc1" :content "42"}]})]
       (let [thread {:messages [{:ts "1709567890.000002" :text "The answer is 42" :bot_id "B123"}]}
             result (#'slackbot.streaming/thread->history thread "UBOT123" "conv-123")]
         (is (= 3 (count result)))
@@ -61,7 +61,7 @@
 
 (deftest thread->history-excludes-thinking-test
   (testing "Thinking placeholder messages are excluded from history"
-    (with-redefs [slackbot.persistence/message-history (constantly {})]
+    (mt/with-dynamic-fn-redefs [slackbot.persistence/message-history (constantly {})]
       (let [thread {:messages [{:ts "1709567890.000001" :text "question" :user "U123"}
                                {:ts "1709567890.000002" :text "_Thinking..._" :bot_id "B123"}]}
             result (#'slackbot.streaming/thread->history thread "UBOT123" "conv-123")]
@@ -70,7 +70,7 @@
 
 (deftest thread->history-excludes-blank-bot-messages-test
   (testing "Bot messages with blank text are excluded"
-    (with-redefs [slackbot.persistence/message-history (constantly {})]
+    (mt/with-dynamic-fn-redefs [slackbot.persistence/message-history (constantly {})]
       (let [thread {:messages [{:ts "1709567890.000001" :text "" :bot_id "B123"}
                                {:ts "1709567890.000002" :text "   " :bot_id "B123"}
                                {:ts "1709567890.000003" :text "real" :bot_id "B123"}]}
@@ -79,9 +79,9 @@
 
 (deftest thread->history-excludes-soft-deleted-bot-messages-test
   (testing "thread->history excludes bot messages that have been soft-deleted"
-    (with-redefs [slackbot.persistence/message-history  (constantly {})
-                  slackbot.persistence/deleted-message-ids
-                  (fn [_conv-id _ids] #{"1709567890.000002"})]
+    (mt/with-dynamic-fn-redefs [slackbot.persistence/message-history  (constantly {})
+                                slackbot.persistence/deleted-message-ids
+                                (fn [_conv-id _ids] #{"1709567890.000002"})]
       (let [thread {:messages [{:ts "1709567890.000001" :text "User question" :user "U123"}
                                {:ts "1709567890.000002" :text "Deleted bot response" :bot_id "B123"}
                                {:ts "1709567890.000003" :text "Live bot response" :bot_id "B123"}]}
@@ -216,13 +216,13 @@
         (tu/with-slackbot-mocks
           {:ai-text "Hello!"}
           (fn [_ctx]
-            (with-redefs [metabot.persistence/store-message!
-                          (fn [_conv-id _profile-id _messages & {:as opts}]
-                            (deliver stored opts)
-                            nil)
-                          ;; Force setup to throw *after* the user message has been stored.
-                          slackbot.persistence/message-history
-                          (fn [& _] (throw (ex-info "boom" {})))]
+            (mt/with-dynamic-fn-redefs [metabot.persistence/store-message!
+                                        (fn [_conv-id _profile-id _messages & {:as opts}]
+                                          (deliver stored opts)
+                                          nil)
+                                        ;; Force setup to throw *after* the user message has been stored.
+                                        slackbot.persistence/message-history
+                                        (fn [& _] (throw (ex-info "boom" {})))]
               (mt/client :post 200 "metabot/slack/events"
                          (tu/slack-request-options event-body)
                          event-body)
@@ -243,10 +243,10 @@
                   {:ai-text "Hello!"}
                   (fn [{:keys [stop-stream-calls]}]
                     (mt/with-temporary-setting-values [analytics-pii-retention-enabled flag-on?]
-                      (with-redefs [metabot.persistence/store-native-parts!
-                                    (fn [_conv-id _profile-id _parts & {:as opts}]
-                                      (swap! store-opts conj opts)
-                                      nil)]
+                      (mt/with-dynamic-fn-redefs [metabot.persistence/store-native-parts!
+                                                  (fn [_conv-id _profile-id _parts & {:as opts}]
+                                                    (swap! store-opts conj opts)
+                                                    nil)]
                         (mt/client :post 200 "metabot/slack/events"
                                    (tu/slack-request-options event-body)
                                    event-body)
@@ -267,14 +267,14 @@
           {:ai-text "Hello!"}
           (fn [{:keys [stop-stream-calls]}]
             (mt/with-temporary-setting-values [llm-metabot-provider "anthropic/claude-haiku-4-5"]
-              (with-redefs [metabot.persistence/store-message!
-                            (fn [_conv-id _profile-id _messages & {:as opts}]
-                              (swap! store-opts conj opts)
-                              nil)
-                            metabot.persistence/store-native-parts!
-                            (fn [_conv-id _profile-id _parts & {:as opts}]
-                              (swap! store-opts conj opts)
-                              nil)]
+              (mt/with-dynamic-fn-redefs [metabot.persistence/store-message!
+                                          (fn [_conv-id _profile-id _messages & {:as opts}]
+                                            (swap! store-opts conj opts)
+                                            nil)
+                                          metabot.persistence/store-native-parts!
+                                          (fn [_conv-id _profile-id _parts & {:as opts}]
+                                            (swap! store-opts conj opts)
+                                            nil)]
                 (mt/client :post 200 "metabot/slack/events"
                            (tu/slack-request-options event-body)
                            event-body)
