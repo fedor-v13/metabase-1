@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useGetUserMetabotPermissionsQuery } from "metabase/api";
 import { useSetting } from "metabase/common/hooks";
 import { useSelector } from "metabase/redux";
-import { canAccessSettings } from "metabase/selectors/user";
+import { canAccessSettings, getUser } from "metabase/selectors/user";
 
 import { useMetabotEnabledEmbeddingAware } from "./use-metabot-embedding-aware-enabled";
 
@@ -18,14 +18,16 @@ export const useUserMetabotPermissions = () => {
   });
   const isConfigured = !!useSetting("llm-metabot-configured?");
   const canConfigure = useSelector(canAccessSettings);
+  const currentUser = useSelector(getUser);
   const { data, isLoading, isError } = useGetUserMetabotPermissionsQuery(
     undefined,
-    { skip: !isMetabotEnabled },
+    { skip: !isMetabotEnabled || !currentUser },
   );
 
   const perms = data?.permissions;
   const hasMetabotAccess =
     isMetabotEnabled && !isLoading && perms?.metabot === "yes";
+
   const hasSqlGenerationAccess =
     hasMetabotAccess && perms?.["metabot-sql-generation"] === "yes";
   const hasNlqAccess = hasMetabotAccess && perms?.["metabot-nlq"] === "yes";

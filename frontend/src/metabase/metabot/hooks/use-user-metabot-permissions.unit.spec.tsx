@@ -7,6 +7,7 @@ import { createMockState } from "metabase/redux/store/mocks";
 import type { UserMetabotPermissionsResponse } from "metabase-types/api";
 import {
   createMockTokenFeatures,
+  createMockUser,
   createMockUserMetabotPermissions,
 } from "metabase-types/api/mocks";
 
@@ -20,11 +21,13 @@ function TestComponent() {
 function setup({
   isMetabotEnabled = true,
   isConfigured = true,
+  currentUser = createMockUser(),
   apiResponse,
   apiStatus = 200,
 }: {
   isMetabotEnabled?: boolean;
   isConfigured?: boolean;
+  currentUser?: ReturnType<typeof createMockUser> | null;
   apiResponse?: UserMetabotPermissionsResponse;
   apiStatus?: number;
 } = {}) {
@@ -45,7 +48,7 @@ function setup({
   setupEnterprisePlugins();
 
   renderWithProviders(<TestComponent />, {
-    storeInitialState: createMockState({ settings }),
+    storeInitialState: createMockState({ settings, currentUser }),
   });
 }
 
@@ -78,6 +81,17 @@ describe("useUserMetabotPermissions", () => {
     expect(perms.canUseSqlGeneration).toBe(false);
     expect(perms.canUseNlq).toBe(false);
     expect(perms.canUseOtherTools).toBe(false);
+  });
+
+  it("does not fetch user permissions without an authenticated user", async () => {
+    setup({ currentUser: null });
+    const perms = await getPerms();
+    expect(perms.hasMetabotAccess).toBe(false);
+    expect(
+      fetchMock.callHistory.called(
+        "path:/api/metabot/permissions/user-permissions",
+      ),
+    ).toBe(false);
   });
 
   it("returns access booleans but no usage booleans when AI is not configured", async () => {
