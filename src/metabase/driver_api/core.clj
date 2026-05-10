@@ -55,7 +55,6 @@
    [metabase.sync.util :as sync-util]
    [metabase.system.core :as system]
    [metabase.upload.db :as upload.db]
-   [metabase.util.match :as match]
    [metabase.warehouse-schema.models.table :as table]
    [potemkin :as p]))
 
@@ -102,9 +101,6 @@
  lib.schema.common/instance-of-class
  lib.schema.temporal-bucketing/date-bucketing-units
  lib.types.isa/temporal?
- match/match-one
- match/match-many
- match/replace
  lib/truncate-alias
  lib/->legacy-MBQL
  lib/->metadata-provider
