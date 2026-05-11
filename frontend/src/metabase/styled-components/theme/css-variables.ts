@@ -15,7 +15,6 @@ import {
 import type { ResolvedColorScheme } from "metabase/lib/color-scheme";
 import type { MantineTheme } from "metabase/ui";
 import { deriveFullMetabaseTheme } from "metabase/ui/colors";
-import type { ColorName } from "metabase/ui/colors/types";
 import type { ColorSettings } from "metabase-types/api";
 
 const createColorVars = (
@@ -68,8 +67,7 @@ export function getMetabaseSdkCssVariables({
   return css`
     :root {
       --mb-default-font-family: ${font};
-      ${createColorVars("light", whitelabelColors)}
-      ${getSdkDesignSystemCssVariables(theme)}
+      ${createMergedSdkColorVars(theme, whitelabelColors)}
       ${getDynamicCssVariables(theme)}
       ${getThemeSpecificCssVariables(theme)}
     }
@@ -77,42 +75,65 @@ export function getMetabaseSdkCssVariables({
 }
 
 /**
- * Design System CSS variables.
- * These CSS variables are part of the core design system colors.
+ * Generates a single, merged set of CSS color variable declarations for the SDK.
  *
- * Only keep colors that depend on the theme and are not specified anywhere else here.
- * You don't need to add new colors from `frontend/src/metabase/ui/colors/colors.ts` here since
- * they're already included in `getMetabaseSdkCssVariables`
- **/
-function getSdkDesignSystemCssVariables(theme: MantineTheme) {
-  const createSdkColorVars = (colorName: ColorName) => {
-    /**
-     * Prevent returning the primary color when color is not found,
-     * so we could add a logic to fallback to the default color ourselves.
-     *
-     * We will only create CSS custom properties for colors that are defined
-     * in the palette, and additional colors overridden by the SDK.
-     */
-    const color = theme.fn.themeColor(colorName);
-    const colorExist = color !== colorName;
-    if (colorExist) {
-      return `--mb-color-${colorName}: ${color};`;
+ * Instead of generating base light-theme colors first and then trying to override
+ * them with SDK theme colors via CSS declaration ordering (which can be unreliable
+ * with Emotion's css template literal processing of mixed string/object interpolations),
+ * this function merges all colors in JavaScript first and produces one declaration per variable.
+ *
+ * Priority: base light theme < whitelabel colors < SDK theme overrides from Mantine theme
+ */
+function createMergedSdkColorVars(
+  theme: MantineTheme,
+  whitelabelColors?: ColorSettings | null,
+): string {
+  // 1. Start with the full set of base light theme colors (includes computed colors like color-mix())
+  const baseColors = deriveFullMetabaseTheme({
+    colorScheme: "light",
+    whitelabelColors,
+  }).colors;
+
+  // 2. Build SDK overrides from the Mantine theme (which already has SDK colors merged in)
+  const sdkOverrides: Record<string, string> = {};
+
+  // SDK-mappable colors
+  for (const colorNames of Object.values(SDK_TO_MAIN_APP_COLORS_MAPPING)) {
+    for (const colorName of colorNames) {
+      const color = theme.fn.themeColor(colorName);
+      if (color !== colorName) {
+        sdkOverrides[colorName] = color;
+      }
     }
+  }
+
+  // SDK tooltip colors
+  for (const colorName of Object.values(
+    SDK_TO_MAIN_APP_TOOLTIP_COLORS_MAPPING,
+  )) {
+    const color = theme.fn.themeColor(colorName);
+    if (color !== colorName) {
+      sdkOverrides[colorName] = color;
+    }
+  }
+
+  // Unchangeable colors
+  for (const colorName of SDK_UNCHANGEABLE_COLORS) {
+    const color = theme.fn.themeColor(colorName);
+    if (color !== colorName) {
+      sdkOverrides[colorName] = color;
+    }
+  }
+
+  // 3. Merge: SDK overrides win over base colors
+  const mergedColors: Record<string, string> = {
+    ...baseColors,
+    ...sdkOverrides,
   };
-  return css`
-    /* SDK colors defined via theme.colors */
-    ${Object.entries(SDK_TO_MAIN_APP_COLORS_MAPPING).flatMap(([, colorNames]) =>
-      colorNames.map(createSdkColorVars),
-    )}
 
-    /* SDK tooltip colors defined via theme.components.tooltip */
-    ${Object.entries(SDK_TO_MAIN_APP_TOOLTIP_COLORS_MAPPING).flatMap(
-      ([, colorName]) => createSdkColorVars(colorName),
-    )}
-
-    /* Colors that cannot be changed. */
-    ${SDK_UNCHANGEABLE_COLORS.map((colorName) => createSdkColorVars(colorName))}
-  `;
+  return Object.entries(mergedColors)
+    .map(([name, value]) => `--mb-color-${name}: ${value};`)
+    .join("\n");
 }
 
 /**
