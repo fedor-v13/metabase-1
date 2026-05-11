@@ -30,10 +30,10 @@ export const useExtractResourceIdFromJwtToken = <TEntityId>({
     }
 
     if (isGuestEmbed && resourceId) {
+      // Allow guest embeds to work with just a resourceId (no JWT token needed)
       return {
-        resourceId: null,
+        resourceId,
         token: null,
-        tokenError: t`A valid JWT token is required to be passed in guest embeds mode.`,
       };
     }
 
