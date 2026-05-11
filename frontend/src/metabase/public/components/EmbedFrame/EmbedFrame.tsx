@@ -52,7 +52,6 @@ import {
   TitleAndButtonsContainer,
   TitleAndDescriptionContainer,
 } from "./EmbedFrame.styled";
-import { useEmbedCustomCss } from "./useEmbedCustomCss";
 import { useGlobalTheme } from "./useGlobalTheme";
 
 export type EmbedFrameBaseProps = Partial<{
@@ -105,13 +104,11 @@ export const EmbedFrame = ({
   titled,
   theme,
   hide_parameters,
-  customCss,
   pdfDownloadsEnabled = true,
   withFooter = true,
   contentClassName,
 }: EmbedFrameProps) => {
   useGlobalTheme(theme);
-  useEmbedCustomCss(customCss);
   const hasEmbedBranding = useSelector(
     (state) => !getSetting(state, "hide-embed-branding?"),
   );

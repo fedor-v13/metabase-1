@@ -59,8 +59,6 @@ export type EmbeddingDisplayOptions = {
 export type EmbeddingAdditionalHashOptions = {
   hide_parameters?: string | null;
   locale?: string;
-  /** URL-encoded CSS string to inject into the embed iframe's `<head>`. */
-  customCss?: string | null;
 };
 
 export type EmbeddingHashOptions = {
