@@ -131,6 +131,9 @@ function createMergedSdkColorVars(
     ...sdkOverrides,
   };
 
+  console.log("[createMergedSdkColorVars] sdkOverrides count:", Object.keys(sdkOverrides).length);
+  console.log("[createMergedSdkColorVars] sdkOverrides:", JSON.stringify(sdkOverrides));
+
   return Object.entries(mergedColors)
     .map(([name, value]) => `--mb-color-${name}: ${value};`)
     .join("\n");
