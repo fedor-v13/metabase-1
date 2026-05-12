@@ -165,12 +165,6 @@ const SdkIframeEmbedView = ({
           componentName: "metabase-dashboard",
           token: P.nonNullable,
         },
-        // Guest embed with dashboardId (no JWT token needed)
-        {
-          componentName: "metabase-dashboard",
-          dashboardId: P.nonNullable,
-          isGuest: true,
-        },
         (settings) => {
           const entityProps: SdkDashboardEntityPublicProps = settings.token
             ? {

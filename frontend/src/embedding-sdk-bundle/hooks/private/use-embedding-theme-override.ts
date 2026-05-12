@@ -30,21 +30,15 @@ export function useEmbeddingThemeOverride(
     if (!theme || isEmbeddingThemeV1(theme)) {
       const themeWithPreset = applyThemePreset(theme);
 
-      console.log("[useEmbeddingThemeOverride] theme input:", JSON.stringify(theme));
-      console.log("[useEmbeddingThemeOverride] themeWithPreset:", JSON.stringify(themeWithPreset));
-      console.log("[useEmbeddingThemeOverride] themeWithPreset?.colors:", JSON.stringify(themeWithPreset?.colors));
-
       // !! Mutate the global colors object to apply the new colors.
       // This must be done before ThemeProvider calls getThemeOverrides.
       setGlobalEmbeddingColors(themeWithPreset?.colors, appColors ?? {});
 
-      const override = getEmbeddingThemeOverride(
+      return getEmbeddingThemeOverride(
         themeWithPreset || {},
         font,
         appColors ?? {},
       );
-      console.log("[useEmbeddingThemeOverride] override.colors keys:", override.colors ? Object.keys(override.colors) : "none");
-      return override;
     }
 
     // We must include Modular Embedding specific overrides for portals (e.g. popover and modal) to target the correct portal id

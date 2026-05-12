@@ -10,9 +10,6 @@ export const useNormalizeComponentProviderProps = (
   const hasTokenFeature = useSdkSelector(getHasTokenFeature);
   const normalizedProps = { ...props };
 
-  console.log("[useNormalizeComponentProviderProps] hasTokenFeature:", hasTokenFeature);
-  console.log("[useNormalizeComponentProviderProps] theme BEFORE normalization:", JSON.stringify(normalizedProps.theme));
-
   if (!hasTokenFeature) {
     // We prevent defining a locale
     delete normalizedProps.locale;
@@ -22,8 +19,6 @@ export const useNormalizeComponentProviderProps = (
       normalizedProps.theme = _.pick(normalizedProps.theme, "preset", "colors", "fontFamily", "fontSize", "lineHeight", "components");
     }
   }
-
-  console.log("[useNormalizeComponentProviderProps] theme AFTER normalization:", JSON.stringify(normalizedProps.theme));
 
   return normalizedProps;
 };
