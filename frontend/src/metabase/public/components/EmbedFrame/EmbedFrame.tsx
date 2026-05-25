@@ -140,8 +140,8 @@ export const EmbedFrame = ({
     .filter(Boolean)
     .join(",");
 
-  const isFooterEnabled =
-    withFooter && (hasEmbedBranding || pdfDownloadsEnabled || actionButtons);
+  const isFooterEnabled = false; 
+  // = withFooter && (hasEmbedBranding || pdfDownloadsEnabled || actionButtons);
 
   const finalName = titled ? name : null;
 
