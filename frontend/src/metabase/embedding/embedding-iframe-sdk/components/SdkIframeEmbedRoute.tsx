@@ -113,7 +113,7 @@ export const SdkIframeEmbedRoute = () => {
       >
         <SdkIframeEmbedView settings={embedSettings} />
 
-        {isGuest && <EmbedBrandingFooter />}
+        {/* Footer disabled */}
       </Stack>
     </ComponentProvider>
   );

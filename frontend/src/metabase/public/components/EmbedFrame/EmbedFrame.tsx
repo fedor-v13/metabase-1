@@ -290,6 +290,17 @@ export const EmbedFrame = ({
       </ContentContainer>
 
       {dashboard && <FilterApplyToast position="fixed" />}
+      {isFooterEnabled && (
+        <EmbeddingFooter
+          variant={footerVariant}
+          isDarkMode={theme === "night"}
+          hasEmbedBranding={hasEmbedBranding}
+        >
+          {actionButtons && (
+            <ActionButtonsContainer>{actionButtons}</ActionButtonsContainer>
+          )}
+        </EmbeddingFooter>
+      )}
     </Root>
   );
 };
