@@ -6,6 +6,7 @@ import type {
 } from "metabase-types/api";
 
 import type {
+  BuiltInDisplayTheme,
   DisplayTheme,
   EmbedResource,
   EmbedResourceType,
@@ -19,13 +20,29 @@ type Appearance = {
   background: boolean;
   titled: boolean;
   bordered: boolean;
-  theme: DisplayTheme;
+  theme: BuiltInDisplayTheme;
   font: "instance" | "custom";
   enabled_download_types: EmbedResourceDownloadOptions | null;
 
   /** @deprecated use `enabled_download_types` instead */
   downloads: boolean | null;
 };
+
+const BUILT_IN_DISPLAY_THEMES: BuiltInDisplayTheme[] = [
+  "light",
+  "night",
+  "transparent",
+];
+
+/**
+ * The `embed_flow` snowplow schema constrains `theme` to the built-in themes,
+ * so the slug of a saved theme cannot be reported as-is without failing schema
+ * validation. Saved themes are reported as `light`; the alternative would be a
+ * new schema version with an unbounded string.
+ */
+function normalizeTheme(theme: DisplayTheme | null): BuiltInDisplayTheme {
+  return BUILT_IN_DISPLAY_THEMES.find((builtIn) => builtIn === theme) ?? "light";
+}
 
 export const trackStaticEmbedDiscarded = ({
   artifact,
@@ -119,7 +136,7 @@ function normalizeAppearance(
     background: displayOptions.background,
     titled: displayOptions.titled,
     bordered: displayOptions.bordered,
-    theme: displayOptions.theme ?? "light",
+    theme: normalizeTheme(displayOptions.theme),
     font: displayOptions.font ? "custom" : "instance",
     enabled_download_types: displayOptions.downloads,
     downloads: null, // `downloads` is deprecated, use `enabled_download_types` instead.

@@ -7,7 +7,16 @@ import type {
   ParameterValueOrArray,
 } from "metabase-types/api";
 
-export type DisplayTheme = "light" | "night" | "transparent";
+/**
+ * The built-in display themes, plus the slug of a saved embedding theme.
+ *
+ * `(string & {})` keeps autocompletion and exhaustiveness working for the
+ * built-ins; a bare `| string` would collapse the union and silently disable
+ * both.
+ */
+export type DisplayTheme = BuiltInDisplayTheme | (string & {});
+
+export type BuiltInDisplayTheme = "light" | "night" | "transparent";
 
 export type EmbedResource = (Card | Dashboard) & {
   embedding_params?: EmbeddingParameters | null;

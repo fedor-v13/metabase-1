@@ -2,29 +2,21 @@ import { push } from "react-router-redux";
 import { t } from "ttag";
 
 import { useDeleteThemeFlow } from "metabase/admin/embedding/hooks";
-import { UpsellEmbeddingTheme } from "metabase/admin/upsells";
 import {
   useCopyEmbeddingThemeMutation,
   useListEmbeddingThemesQuery,
 } from "metabase/api/embedding-theme";
-import { useHasTokenFeature, useToast } from "metabase/common/hooks";
+import { useToast } from "metabase/common/hooks";
 import { useDispatch } from "metabase/redux";
 import { Loader, SimpleGrid, Stack, Text, Title } from "metabase/ui";
 
 import { EmbeddingThemeCard } from "./EmbeddingThemeCard";
 import { NewThemeCard } from "./NewThemeCard";
 
+// Themes are available regardless of token features: static and public embeds
+// consume them through the `embedding-themes` setting, and both the editor route
+// and `/api/embed-theme` are superuser-gated only.
 export function EmbeddingThemeListingApp() {
-  const hasSimpleEmbedding = useHasTokenFeature("embedding_simple");
-
-  if (!hasSimpleEmbedding) {
-    return <UpsellEmbeddingTheme source="embedding-themes" />;
-  }
-
-  return <EmbeddingThemeListingAppInner />;
-}
-
-function EmbeddingThemeListingAppInner() {
   const dispatch = useDispatch();
   const { data: themes, isLoading } = useListEmbeddingThemesQuery();
   const [duplicateTheme] = useCopyEmbeddingThemeMutation();

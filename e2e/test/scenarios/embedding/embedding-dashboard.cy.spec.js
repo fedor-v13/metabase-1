@@ -14,6 +14,16 @@ import {
 
 const { ORDERS, PEOPLE, PEOPLE_ID, PRODUCTS, ORDERS_ID } = SAMPLE_DATABASE;
 
+/**
+ * Picks a theme in the Look and Feel tab. The control lists saved embedding
+ * themes alongside Light and Dark, so it is a Select whose dropdown renders
+ * outside of the modal — call this from outside any `H.modal().within()`.
+ */
+function selectEmbedTheme(themeName) {
+  H.modal().findByLabelText("Theme").click();
+  H.selectDropdown().findByText(themeName).click();
+}
+
 describe("scenarios > embedding > static embedding dashboard", () => {
   beforeEach(() => {
     H.restore();
@@ -857,9 +867,13 @@ describe("scenarios > embedding > dashboard appearance", () => {
         .then((embedTheme) => {
           expect(embedTheme).to.eq("light"); // default value
         });
+    });
 
-      // We're getting an input element which is 0x0 in size
-      cy.findByLabelText("Dark").click({ force: true });
+    // The theme control lists saved embedding themes, so it is a Select whose
+    // dropdown renders outside of the modal. We exit the modal context to pick.
+    selectEmbedTheme("Dark");
+
+    H.modal().within(() => {
       cy.wait(1000);
       H.getIframeBody()
         .findByTestId("embed-frame")
@@ -991,9 +1005,13 @@ describe("scenarios > embedding > dashboard appearance", () => {
         .then((embedTheme) => {
           expect(embedTheme).to.eq("light"); // default value
         });
+    });
 
-      // We're getting an input element which is 0x0 in size
-      cy.findByLabelText("Dark").click({ force: true });
+    // The theme control lists saved embedding themes, so it is a Select whose
+    // dropdown renders outside of the modal. We exit the modal context to pick.
+    selectEmbedTheme("Dark");
+
+    H.modal().within(() => {
       cy.wait(1000);
       H.getIframeBody()
         .findByTestId("embed-frame")
@@ -1353,11 +1371,14 @@ describe("scenarios > embedding > dashboard appearance", () => {
         previewMode: "preview",
       });
 
-      H.modal().within(() => {
-        cy.findByRole("tab", { name: "Look and Feel" }).click();
+      H.modal()
+        .findByRole("tab", { name: "Look and Feel" })
+        .click();
 
-        cy.log("wait until we are at the night theme");
-        cy.findByLabelText("Dark").click({ force: true });
+      cy.log("wait until we are at the night theme");
+      selectEmbedTheme("Dark");
+
+      H.modal().within(() => {
         H.getIframeBody()
           .findByTestId("embed-frame")
           .invoke("attr", "data-embed-theme")
