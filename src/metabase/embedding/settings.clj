@@ -328,3 +328,21 @@
   :export?    false
   :can-read-from-env? false
   :doc        false)
+
+(defsetting embedding-themes
+  (deferred-tru "Saved embedding themes, readable by unauthenticated static and public embed pages.")
+  ;; Static and public embeds are viewed anonymously, so they cannot call the superuser-only
+  ;; `/api/embed-theme`. Exposing themes as a public setting puts them in the bootstrap payload that
+  ;; already carries `application-colors`, so an embed can paint with its theme on the first render
+  ;; instead of flashing default colors while a request is in flight.
+  ;;
+  ;; Only `name` and `settings` are exposed. Theme ids stay private: `GET /api/embed-theme`
+  ;; enumerates every theme and must remain superuser-only.
+  :type       :json
+  :visibility :public
+  :setter     :none
+  :export?    false
+  :doc        false
+  :getter     (fn []
+                (when (or (enable-embedding-static) (enable-embedding-simple))
+                  (t2/select [:model/EmbeddingTheme :name :settings]))))

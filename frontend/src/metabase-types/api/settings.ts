@@ -5,7 +5,10 @@ import type { CurrencyStyle } from "metabase/utils/formatting";
 import type { InputSettingType } from "./actions";
 import type { DashboardId } from "./dashboard";
 import type { DatabaseId } from "./database";
-import type { SdkIframeEmbedSetupTheme } from "./embedding-theme";
+import type {
+  PublicEmbeddingTheme,
+  SdkIframeEmbedSetupTheme,
+} from "./embedding-theme";
 import type { GroupId } from "./group";
 import type { MetabotLimitPeriod, MetabotLimitType } from "./metabot";
 import type { NotificationRecipient } from "./notification";
@@ -587,6 +590,11 @@ interface PublicSettings {
   "mfa-enforcement"?: "off" | "optional";
   "embedding-app-origins-sdk": string | null;
   "embedding-app-origins-interactive": string | null;
+  /**
+   * Saved embedding themes, exposed publicly so that unauthenticated static and
+   * public embed pages can resolve `#theme=<slug>` without an extra request.
+   */
+  "embedding-themes": PublicEmbeddingTheme[] | null;
   "enable-password-login": boolean;
   "enable-pivoted-exports": boolean;
   "enable-sandboxes?": boolean;

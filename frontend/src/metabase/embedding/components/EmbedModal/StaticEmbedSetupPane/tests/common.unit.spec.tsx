@@ -17,6 +17,17 @@ const DATE_PARAMETER_MOCK = {
   type: "date/month-year",
 };
 
+/**
+ * The theme control lists saved embedding themes alongside the built-in ones,
+ * so it is a Select rather than a segmented control.
+ */
+async function selectTheme(themeName: string) {
+  await userEvent.click(screen.getByLabelText("Theme"));
+
+  const popover = await screen.findByRole("listbox", { name: "Theme" });
+  await userEvent.click(within(popover).getByText(themeName));
+}
+
 describe("Static Embed Setup phase", () => {
   describe.each([
     {
@@ -437,7 +448,7 @@ describe("Static Embed Setup phase", () => {
           activeTab: "Look and Feel",
         });
 
-        await userEvent.click(screen.getByText("Dark"));
+        await selectTheme("Dark");
 
         expect(
           screen.getByText("Here’s the code you’ll need to alter:"),
@@ -635,7 +646,7 @@ describe("Static Embed Setup phase", () => {
       screen.getByTestId("text-editor-mock-highlighted-code"),
     ).toHaveTextContent(`params: { "${DATE_PARAMETER_MOCK.slug}": [] }`);
 
-    await userEvent.click(screen.getByText("Dark"));
+    await selectTheme("Dark");
 
     const appearanceChangedCode = `"#theme=night&bordered=true&titled=true"`;
 

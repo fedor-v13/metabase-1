@@ -4,6 +4,7 @@
    [clojure.test :refer :all]
    [metabase.analytics.snowplow-test :as snowplow-test]
    [metabase.embedding.settings :as embed.settings]
+   [metabase.settings.core :as setting]
    [metabase.test :as mt]
    [toucan2.core :as t2]))
 
@@ -273,3 +274,29 @@
           (mt/with-temp-env-var-value! [mb-embedding-app-origins-interactive "ssh://metabase.com"]
             (is (= "ssh://metabase.com"
                    (embed.settings/embedding-app-origins-interactive)))))))))
+
+(deftest embedding-themes-test
+  (testing "embedding-themes exposes saved themes to unauthenticated embed pages"
+    (mt/with-temp [:model/EmbeddingTheme _ {:name     "Corporate Blue"
+                                            :settings {:colors {:brand "#3498db"}}}]
+      (testing "returns name and settings when static embedding is on"
+        (mt/with-temporary-setting-values [enable-embedding-static true
+                                           enable-embedding-simple false]
+          (let [themes (embed.settings/embedding-themes)]
+            (is (contains? (set (map :name themes)) "Corporate Blue"))
+            (testing "theme ids stay private"
+              (is (every? #(= #{:name :settings} (set (keys %))) themes))))))
+
+      (testing "returns name and settings when simple embedding is on"
+        (mt/with-temporary-setting-values [enable-embedding-static false
+                                           enable-embedding-simple true]
+          (is (contains? (set (map :name (embed.settings/embedding-themes)))
+                         "Corporate Blue"))))
+
+      (testing "publishes nothing when the instance does not embed"
+        (mt/with-temporary-setting-values [enable-embedding-static false
+                                           enable-embedding-simple false]
+          (is (nil? (embed.settings/embedding-themes)))))))
+
+  (testing "is readable without authentication, since embed viewers are anonymous"
+    (is (= :public (:visibility (setting/resolve-setting :embedding-themes))))))

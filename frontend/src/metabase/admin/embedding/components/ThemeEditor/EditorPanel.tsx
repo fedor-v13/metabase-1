@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { t } from "ttag";
 
 import type { EmbeddingThemeEditorResult } from "metabase/admin/embedding/hooks/use-embedding-theme-editor";
+import { slugifyThemeName } from "metabase/embedding/lib/saved-themes";
 import {
   Box,
   Button,
@@ -47,6 +48,7 @@ export function EditorPanel({
     () => getThemeCodeSnippet(currentTheme?.settings ?? {}),
     [currentTheme?.settings],
   );
+  const themeSlug = slugifyThemeName(currentTheme?.name ?? "");
 
   if (!currentTheme) {
     return null;
@@ -96,6 +98,11 @@ export function EditorPanel({
               onChange={(e) => editor.setName(e.currentTarget.value)}
               autoFocus
               onFocus={(e) => e.currentTarget.select()}
+              description={
+                themeSlug
+                  ? t`Use this theme in static embed URLs with #theme=${themeSlug}`
+                  : undefined
+              }
             />
           </Card>
 

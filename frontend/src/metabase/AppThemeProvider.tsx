@@ -8,12 +8,14 @@ import {
 } from "react";
 
 import { useUpdateSettingMutation } from "metabase/api";
+import { useSetting } from "metabase/common/hooks";
 import {
   isPublicEmbedding,
   isStaticEmbedding,
 } from "metabase/embedding/config";
 import { useEmbedColorOverrides } from "metabase/embedding/hooks/use-embed-color-overrides";
 import type { EmbedColorOverrides } from "metabase/embedding/lib/color-overrides";
+import { findSavedTheme } from "metabase/embedding/lib/saved-themes";
 import type { DisplayTheme } from "metabase/embedding/types";
 import { isEmbeddingSdk } from "metabase/embedding-sdk/config";
 import type { MetabaseComponentTheme } from "metabase/embedding-sdk/theme";
@@ -32,7 +34,7 @@ import {
 } from "metabase/utils/color-scheme";
 import MetabaseSettings from "metabase/utils/settings";
 import type { DeepPartial } from "metabase/utils/types";
-import type { ColorSettings } from "metabase-types/api";
+import type { ColorSettings, PublicEmbeddingTheme } from "metabase-types/api";
 
 import { AppColorSchemeProvider } from "./AppColorSchemeProvider";
 
@@ -64,27 +66,52 @@ const getColorSchemeFromDisplayTheme = (
   return null;
 };
 
-const getColorSchemeOverride = ({ hash }: Location) => {
-  return getColorSchemeFromDisplayTheme(parseHashOptions(hash).theme);
+/**
+ * Resolves `#theme=...` on a static or public embed to a color scheme.
+ *
+ * Beyond the built-in themes, the hash may name a saved theme, whose `preset`
+ * decides light or dark. Anything left unresolved falls back to light rather
+ * than null: null would defer to the *viewer's* OS color scheme, so a
+ * dark-mode visitor would get a dark embed under a light theme.
+ */
+const getColorSchemeOverride = (
+  hash: string,
+  savedThemes: PublicEmbeddingTheme[] | null,
+): ResolvedColorScheme => {
+  const { theme } = parseHashOptions(hash);
+  const builtInScheme = getColorSchemeFromDisplayTheme(theme);
+
+  if (builtInScheme) {
+    return builtInScheme;
+  }
+
+  const preset = findSavedTheme(savedThemes, theme)?.settings.preset;
+
+  return preset === "dark" ? "dark" : "light";
 };
 
 const useColorSchemeFromHash = ({
   enabled = true,
+  savedThemes,
 }: {
   enabled?: boolean;
+  savedThemes: PublicEmbeddingTheme[] | null;
 }): ResolvedColorScheme | null => {
-  const [hashScheme, setHashScheme] = useState<ResolvedColorScheme | null>(() =>
-    getColorSchemeOverride(location),
-  );
+  const [hash, setHash] = useState(() => location.hash);
+
   useEffect(() => {
     if (!enabled) {
       return;
     }
-    const onHashChange = () => setHashScheme(getColorSchemeOverride(location));
+    const onHashChange = () => setHash(location.hash);
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [enabled]);
-  return enabled ? hashScheme : null;
+
+  return useMemo(
+    () => (enabled ? getColorSchemeOverride(hash, savedThemes) : null),
+    [enabled, hash, savedThemes],
+  );
 };
 
 /**
@@ -124,8 +151,10 @@ const getComponentThemeOverride = (
 export const AppThemeProvider = (props: AppThemeProviderProps) => {
   const [updateSetting] = useUpdateSettingMutation();
 
+  const savedThemes = useSetting("embedding-themes");
   const schemeFromHash = useColorSchemeFromHash({
     enabled: isStaticEmbedding() || isPublicEmbedding(),
+    savedThemes,
   });
   const forceColorScheme = props.displayTheme
     ? getColorSchemeFromDisplayTheme(props.displayTheme)
