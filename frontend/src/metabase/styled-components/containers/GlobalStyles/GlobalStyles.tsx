@@ -9,6 +9,7 @@ import {
   isPublicEmbedding,
   isStaticEmbedding,
 } from "metabase/embedding/config";
+import { useEmbedColorOverrides } from "metabase/embedding/hooks/use-embed-color-overrides";
 import { useSelector } from "metabase/redux";
 import { getMetabaseCssVariables } from "metabase/styled-components/theme/css-variables";
 import { useMantineTheme } from "metabase/ui";
@@ -21,7 +22,20 @@ import { getFont, getFontFiles } from "../../selectors";
 export const GlobalStyles = (): JSX.Element => {
   const font = useSelector(getFont);
   const fontFiles = useSelector(getFontFiles);
-  const whitelabelColors = useSetting("application-colors");
+  const applicationColors = useSetting("application-colors");
+
+  // `getMetabaseCssVariables` re-derives the palette from the whitelabel colors
+  // rather than reading `theme.colors`, so the embed hash overrides have to be
+  // merged in here as well as in `AppThemeProvider`. Otherwise CSS modules and
+  // Mantine-styled components would disagree on the palette.
+  const embedColorOverrides = useEmbedColorOverrides();
+  const whitelabelColors = useMemo(() => {
+    if (!embedColorOverrides) {
+      return applicationColors;
+    }
+
+    return { ...applicationColors, ...embedColorOverrides.colors };
+  }, [applicationColors, embedColorOverrides]);
 
   const sitePath = getSitePath();
   const theme = useMantineTheme();

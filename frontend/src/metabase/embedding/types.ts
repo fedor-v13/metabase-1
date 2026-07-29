@@ -52,10 +52,38 @@ export type EmbeddingAdditionalHashOptions = {
   locale?: string;
 };
 
+/**
+ * Color overrides accepted in the URL hash of a static or public embed, e.g.
+ * `#primary-color=%23FF5733&card-bg-color=%23FAFAFA`.
+ *
+ * Each is accepted in both its hyphenated and underscored spelling. Values are
+ * hex colors; `#000` and `#000000` mean "transparent". See
+ * `metabase/embedding/lib/color-overrides` for how they map onto theme colors.
+ */
+export type EmbeddingColorOverrideHashOptions = {
+  "primary-color"?: string;
+  primary_color?: string;
+  "secondary-color"?: string;
+  secondary_color?: string;
+  "background-color"?: string;
+  background_color?: string;
+  "text-primary-color"?: string;
+  text_primary_color?: string;
+  "text-secondary-color"?: string;
+  text_secondary_color?: string;
+  "border-color"?: string;
+  border_color?: string;
+  "dashboard-bg-color"?: string;
+  dashboard_bg_color?: string;
+  "card-bg-color"?: string;
+  card_bg_color?: string;
+};
+
 export type EmbeddingHashOptions = {
   downloads: string | boolean | null;
 } & Omit<EmbeddingDisplayOptions, "downloads"> &
-  EmbeddingAdditionalHashOptions;
+  EmbeddingAdditionalHashOptions &
+  EmbeddingColorOverrideHashOptions;
 
 export type CodeSampleParameters = {
   siteUrl: string;
