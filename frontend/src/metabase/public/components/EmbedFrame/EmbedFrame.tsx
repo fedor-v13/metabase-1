@@ -57,6 +57,9 @@ import {
 } from "./EmbedFrame.styled";
 import { useGlobalTheme } from "./useGlobalTheme";
 
+// Embed frame footer is disabled for this deployment.
+const FOOTER_ENABLED = false;
+
 export type EmbedFrameBaseProps = Partial<{
   className: string;
   name: string | null;
@@ -144,7 +147,9 @@ export const EmbedFrame = ({
     .join(",");
 
   const isFooterEnabled =
-    withFooter && (hasEmbedBranding || pdfDownloadsEnabled || actionButtons);
+    FOOTER_ENABLED &&
+    withFooter &&
+    (hasEmbedBranding || pdfDownloadsEnabled || actionButtons);
 
   const finalName = titled ? name : null;
 
