@@ -21,11 +21,8 @@ import type { SdkQuestionEntityPublicProps } from "embedding-sdk-bundle/types/qu
 import { applyThemePreset } from "embedding-sdk-shared/lib/apply-theme-preset";
 import { createSnowplowTracker } from "metabase/analytics";
 import type { OnBeforeRequestHandler } from "metabase/api/client";
-import { EmbeddingFooter } from "metabase/embedding/components/EmbeddingFooter/EmbeddingFooter";
 import { EMBEDDING_SDK_IFRAME_EMBEDDING_CONFIG } from "metabase/embedding-sdk/config";
 import { PLUGIN_EMBEDDING_IFRAME_SDK } from "metabase/plugins";
-import { useSelector } from "metabase/redux";
-import { getSetting } from "metabase/selectors/settings";
 import { getUserId } from "metabase/selectors/user";
 import { Stack } from "metabase/ui";
 
@@ -141,7 +138,7 @@ export const SdkIframeEmbedRoute = () => {
       >
         <SdkIframeEmbedView settings={embedSettings} />
 
-        {isGuest && <EmbedBrandingFooter />}
+        {/* Footer disabled */}
       </Stack>
     </ComponentProvider>
   );
@@ -369,23 +366,5 @@ const SdkIframeEmbedView = ({
         ),
       )
       .otherwise(() => null)
-  );
-};
-
-const EmbedBrandingFooter = () => {
-  const hasEmbedBranding = useSelector(
-    (state) => !getSetting(state, "hide-embed-branding?"),
-  );
-
-  if (!hasEmbedBranding) {
-    return null;
-  }
-
-  return (
-    <PublicComponentStylesWrapper
-      className={SdkIframeEmbedRouteS.BrandingFooter}
-    >
-      <EmbeddingFooter variant="default" hasEmbedBranding />
-    </PublicComponentStylesWrapper>
   );
 };
