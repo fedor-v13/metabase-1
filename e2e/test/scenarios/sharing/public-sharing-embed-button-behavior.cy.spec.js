@@ -6,6 +6,16 @@ import {
 
 const { H } = cy;
 
+/**
+ * Picks a theme in the Look and Feel tab. The control lists saved embedding
+ * themes alongside Light and Dark, so it is a Select whose dropdown renders
+ * outside of the modal — call this from outside any `H.modal().within()`.
+ */
+function selectEmbedTheme(themeName) {
+  H.modal().findByLabelText("Theme").click();
+  H.selectDropdown().findByText(themeName).click();
+}
+
 ["dashboard", "question"].forEach((resource) => {
   describe(`embed modal behavior for ${resource}s`, () => {
     beforeEach(() => {
@@ -536,8 +546,9 @@ describe("#39152 sharing an unsaved question", () => {
 
           H.selectDropdown().findByText("Python").click();
 
+          selectEmbedTheme("Dark");
+
           H.modal().within(() => {
-            cy.findByLabelText("Dark").click({ force: true });
             if (resource === "dashboard") {
               cy.findByLabelText("Dashboard title").click({ force: true });
               cy.findByLabelText("Dashboard border").click({ force: true });
@@ -683,8 +694,9 @@ describe("#39152 sharing an unsaved question", () => {
 
             H.selectDropdown().findByText("Python").click();
 
+            selectEmbedTheme("Dark");
+
             H.modal().within(() => {
-              cy.findByLabelText("Dark").click({ force: true });
               if (resource === "dashboard") {
                 cy.findByLabelText("Dashboard title").click({ force: true });
                 cy.findByLabelText("Dashboard border").click({ force: true });

@@ -305,6 +305,16 @@ export interface EmbeddingTheme {
   updated_at: string;
 }
 
+/**
+ * The subset of a saved theme exposed through the public `embedding-themes`
+ * setting, so that unauthenticated static and public embeds can resolve
+ * `#theme=<slug>`. Theme ids are deliberately withheld.
+ */
+export interface PublicEmbeddingTheme {
+  name: string;
+  settings: MetabaseTheme;
+}
+
 export interface CreateEmbeddingThemeRequest {
   name: string;
   settings: MetabaseTheme;

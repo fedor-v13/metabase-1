@@ -4,6 +4,7 @@ import { jt, t } from "ttag";
 import { ExternalLink } from "metabase/common/components/ExternalLink";
 import { UpsellMetabaseBanner } from "metabase/common/components/upsells/UpsellMetabaseBanner";
 import { useDocsUrl } from "metabase/common/hooks";
+import { slugifyThemeName } from "metabase/embedding/lib/saved-themes";
 import type {
   DisplayTheme,
   EmbedResourceType,
@@ -12,20 +13,13 @@ import type {
 import { useSelector } from "metabase/redux";
 import { getSetting, getUpgradeUrl } from "metabase/selectors/settings";
 import { getCanWhitelabel } from "metabase/selectors/whitelabel";
-import {
-  Divider,
-  SegmentedControl,
-  Select,
-  Stack,
-  Switch,
-  Text,
-} from "metabase/ui";
+import { Divider, Select, Stack, Switch, Text } from "metabase/ui";
+import type { PublicEmbeddingTheme } from "metabase-types/api";
 
 import {
   DashboardDownloadSettings,
   QuestionDownloadSettings,
 } from "./DownloadSettings";
-import { DisplayOptionSection } from "./StaticEmbedSetupPane.styled";
 import { StaticEmbedSetupPaneSettingsContentSection } from "./StaticEmbedSetupPaneSettingsContentSection";
 
 const THEME_OPTIONS = [
@@ -42,7 +36,6 @@ const THEME_OPTIONS = [
     value: "night" as DisplayTheme,
   },
 ] as const;
-type ThemeOptions = (typeof THEME_OPTIONS)[number]["value"];
 
 interface AppearanceSettingsProps {
   resourceType: EmbedResourceType;
@@ -76,6 +69,21 @@ export const LookAndFeelSettings = ({
     getSetting(state, "available-fonts"),
   );
   const isDashboard = resourceType === "dashboard";
+
+  // Saved embedding themes are selected by the slug of their name, which is what
+  // `#theme=` carries and what the embed page resolves against the public
+  // `embedding-themes` setting.
+  const savedThemes = useSelector((state) =>
+    getSetting(state, "embedding-themes"),
+  );
+  // Built without useMemo so the localized labels in THEME_OPTIONS, which are
+  // lazy getters, are read on each render rather than frozen at first paint.
+  const themeOptions = [
+    ...THEME_OPTIONS.map(({ label, value }) => ({ label, value })),
+    // A name can slugify to something empty or to the same slug as another
+    // theme; neither can be selected in a URL, so they are not offered.
+    ...uniqueBySlug(savedThemes ?? []),
+  ];
 
   return (
     <>
@@ -124,19 +132,21 @@ export const LookAndFeelSettings = ({
             )}.`}</Text>
           )}
 
-          <DisplayOptionSection title={t`Theme`}>
-            <SegmentedControl
-              value={displayOptions.theme ?? undefined}
-              data={[...THEME_OPTIONS]}
-              fullWidth
-              onChange={(value: ThemeOptions) => {
-                onChangeDisplayOptions({
-                  ...displayOptions,
-                  theme: value,
-                });
-              }}
-            />
-          </DisplayOptionSection>
+          <Select
+            label={
+              <Text fw="bold" mb="0.25rem" lh="1rem">
+                {t`Theme`}
+              </Text>
+            }
+            value={displayOptions.theme ?? "light"}
+            data={themeOptions}
+            onChange={(value) => {
+              onChangeDisplayOptions({
+                ...displayOptions,
+                theme: value ?? "light",
+              });
+            }}
+          />
 
           {/**
            * We don't offer background options for question embeds because questions are displayed
@@ -213,6 +223,21 @@ export const LookAndFeelSettings = ({
     </>
   );
 };
+
+function uniqueBySlug(themes: PublicEmbeddingTheme[]) {
+  const seen = new Set<string>();
+
+  return themes.flatMap((theme) => {
+    const slug = slugifyThemeName(theme.name);
+
+    if (!slug || seen.has(slug)) {
+      return [];
+    }
+
+    seen.add(slug);
+    return [{ label: theme.name, value: slug }];
+  });
+}
 
 function getBorderLabel(resourceType: EmbedResourceType) {
   return match(resourceType)
