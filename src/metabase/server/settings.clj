@@ -3,7 +3,6 @@
   off a separate `response` module."
   (:require
    [clojure.string :as str]
-   [metabase.config.core :as config]
    [metabase.settings.core :as setting :refer [defsetting]]
    [metabase.system.core :as system]
    [metabase.util.i18n :refer [deferred-tru tru]]
@@ -59,10 +58,9 @@ x.com")
   :setter     (fn [new-value]
                 (let [disabling? (not (cond-> new-value (string? new-value) setting/string->boolean))]
                   (when (and disabling?
-                             config/ee-available?
                              (when-let [custom-viz-enabled?
                                         (requiring-resolve
-                                         'metabase-enterprise.custom-viz-plugin.settings/custom-viz-enabled)]
+                                         'metabase.custom-viz-plugin.settings/custom-viz-enabled)]
                                (custom-viz-enabled?)))
                     (throw (ex-info (tru "Cannot disable the image CSP setting while Custom Visualizations are enabled.")
                                     {:status-code 400})))

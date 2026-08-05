@@ -26,6 +26,7 @@
    [metabase.comments.init]
    [metabase.config.core :as config]
    [metabase.content-verification.init]
+   [metabase.custom-viz-plugin.init]
    [metabase.dashboards.init]
    [metabase.documents.init]
    [metabase.driver.init]

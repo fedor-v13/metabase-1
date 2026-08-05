@@ -8,10 +8,10 @@ import type {
   UpdateCustomVizPluginRequest,
 } from "metabase-types/api";
 
-import { EnterpriseApi } from "./api";
+import { Api } from "./api";
 import { idTag, invalidateTags, listTag } from "./tags";
 
-export const customVizPluginApi = EnterpriseApi.injectEndpoints({
+export const customVizPluginApi = Api.injectEndpoints({
   endpoints: (builder) => ({
     listCustomVizPlugins: builder.query<CustomVizPluginRuntime[], void>({
       query: () => ({

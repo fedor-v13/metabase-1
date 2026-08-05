@@ -23,6 +23,15 @@ EMBEDDING_SDK_CONFIG.tokenFeatureKey = "embedding_simple";
 // load the embedding_iframe_sdk EE plugin
 import "sdk-iframe-embedding-ee-plugins";
 
+// Custom visualizations ship in every edition, so the EE plugin bundle above
+// (a no-op in OSS) can't be the thing that registers them. `useInitPlugins` in
+// ComponentProvider skips initialization for modular embedding, so this is the
+// only registration point on this path.
+// eslint-disable-next-line import/order
+import { initializeSdkCustomVizPlugin } from "embedding-sdk-bundle/lib/custom-viz/initialize";
+
+initializeSdkCustomVizPlugin();
+
 // Must be imported after the EE plugins are loaded
 // eslint-disable-next-line import/order
 import { SdkIframeEmbedRoute } from "metabase/embedding/embedding-iframe-sdk/components/SdkIframeEmbedRoute";

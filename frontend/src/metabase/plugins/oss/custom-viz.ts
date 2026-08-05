@@ -1,5 +1,4 @@
 import type { WidgetMount } from "custom-viz";
-import type { ComponentType } from "react";
 
 import type { IconData } from "metabase/common/utils/icon";
 import { PluginPlaceholder } from "metabase/plugins/components/PluginPlaceholder";
@@ -20,11 +19,6 @@ const noopCustomVizIcon = (
 });
 
 const getDefaultPluginCustomViz = () => ({
-  // Admin settings pages
-  ManageCustomVizPage: PluginPlaceholder as ComponentType<any>,
-  CustomVizPage: PluginPlaceholder as ComponentType<any>,
-  CustomVizDevPage: PluginPlaceholder as ComponentType<any>,
-
   // Hooks & functions
   useAutoLoadCustomVizPlugin: (_display: string | undefined) => ({
     loading: false,

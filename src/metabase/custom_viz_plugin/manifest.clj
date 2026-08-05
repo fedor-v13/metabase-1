@@ -1,4 +1,4 @@
-(ns metabase-enterprise.custom-viz-plugin.manifest
+(ns metabase.custom-viz-plugin.manifest
   "Parsing and validation for custom visualization plugin manifest files (metabase-plugin.json)."
   (:require
    [clojure.string :as str]

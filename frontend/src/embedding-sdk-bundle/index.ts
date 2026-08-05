@@ -16,7 +16,10 @@ import "metabase/embedding-sdk/vendors-side-effects";
 // Import the EE plugins required by the embedding sdk.
 import { initializePlugins } from "sdk-ee-plugins";
 
+import { initializeSdkCustomVizPlugin } from "./lib/custom-viz/initialize";
+
 initializePlugins();
+initializeSdkCustomVizPlugin();
 
 // Imports which are only applicable to the embedding sdk, and not the new iframe embedding.
 import "sdk-specific-imports";

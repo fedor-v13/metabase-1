@@ -9,6 +9,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "ttag";
 
+import { useListCustomVizPluginsQuery } from "metabase/api";
 import { api } from "metabase/api/client";
 import { ExplicitSize } from "metabase/common/components/ExplicitSize";
 import { useToast } from "metabase/common/hooks";
@@ -19,15 +20,10 @@ import { useColorScheme } from "metabase/ui";
 import { getSubpathSafeUrl } from "metabase/urls";
 import { retry } from "metabase/utils/retry";
 import visualizations, { registerVisualization } from "metabase/visualizations";
-import {
-  getCustomPluginIdentifier,
-  getPluginAssetUrl,
-} from "metabase/visualizations/custom-visualizations/custom-viz-utils";
 import type {
   Visualization,
   VisualizationProps,
 } from "metabase/visualizations/types/visualization";
-import { useListCustomVizPluginsQuery } from "metabase-enterprise/api";
 import type {
   CustomVizPluginId,
   CustomVizPluginRuntime,
@@ -38,6 +34,10 @@ import { isCustomVizDisplay } from "metabase-types/guards/visualization";
 
 import { applyDefaultVisualizationProps } from "./custom-viz-common";
 import { ensureVizApi } from "./custom-viz-globals";
+import {
+  getCustomPluginIdentifier,
+  getPluginAssetUrl,
+} from "./custom-viz-utils";
 import type { SandboxMode } from "./sandbox";
 import { usePluginMount } from "./use-plugin-mount";
 

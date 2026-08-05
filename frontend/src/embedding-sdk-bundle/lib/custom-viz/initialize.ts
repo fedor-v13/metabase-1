@@ -2,33 +2,32 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useMetabaseProviderPropsStore } from "embedding-sdk-shared/hooks/use-metabase-provider-props-store";
 import { ensureMetabaseProviderPropsStore } from "embedding-sdk-shared/lib/ensure-metabase-provider-props-store";
+import { customVizPluginApi } from "metabase/api/custom-viz-plugin";
 import { api } from "metabase/api/client";
 import type { IconData } from "metabase/common/utils/icon";
 import { PLUGIN_CUSTOM_VIZ } from "metabase/plugins";
 import type { DispatchFn } from "metabase/redux/hooks";
+import MetabaseSettings from "metabase/utils/settings";
+import { CustomVizSettingWidget } from "metabase/visualizations/custom-visualizations/components/CustomVizSettingWidget";
+import type { LoadCustomVizPluginOptions } from "metabase/visualizations/custom-visualizations/custom-viz-plugins";
+import {
+  loadCustomVizPlugin as baseLoadCustomVizPlugin,
+  useAutoLoadCustomVizPlugin as baseUseAutoLoadCustomVizPlugin,
+  useCustomVizPlugins as baseUseCustomVizPlugins,
+  unregisterCustomVizDisplay,
+  useCustomVizPlugins,
+} from "metabase/visualizations/custom-visualizations/custom-viz-plugins";
 import {
   getCustomPluginIdentifier,
   getPluginAssetUrl,
 } from "metabase/visualizations/custom-visualizations/custom-viz-utils";
-import { customVizPluginApi } from "metabase-enterprise/api/custom-viz-plugin";
-import { hasPremiumFeature } from "metabase-enterprise/settings";
+import { isWidgetMount } from "metabase/visualizations/custom-visualizations/widget-mount";
 import type {
   CustomVizPluginId,
   CustomVizPluginRuntime,
   VisualizationDisplay,
 } from "metabase-types/api";
 import { isCustomVizDisplay } from "metabase-types/guards/visualization";
-
-import { CustomVizSettingWidget } from "../../metabase-enterprise/custom_viz/components/CustomVizSettingWidget";
-import type { LoadCustomVizPluginOptions } from "../../metabase-enterprise/custom_viz/custom-viz-plugins";
-import {
-  loadCustomVizPlugin as eeLoadCustomVizPlugin,
-  useAutoLoadCustomVizPlugin as eeUseAutoLoadCustomVizPlugin,
-  useCustomVizPlugins as eeUseCustomVizPlugins,
-  unregisterCustomVizDisplay,
-  useCustomVizPlugins,
-} from "../../metabase-enterprise/custom_viz/custom-viz-plugins";
-import { isWidgetMount } from "../../metabase-enterprise/custom_viz/widget-mount";
 
 /**
  * Allowlist of plugin identifiers from the `allowedCustomVisualizations`
@@ -120,7 +119,7 @@ export const sdkCustomVizAssetManager = {
 };
 
 export function initializeSdkCustomVizPlugin() {
-  if (!hasPremiumFeature("custom-viz")) {
+  if (!MetabaseSettings.get("token-features")?.["custom-viz"]) {
     return;
   }
 
@@ -135,7 +134,7 @@ export function initializeSdkCustomVizPlugin() {
       if (!getAllowlist().includes(getCustomPluginIdentifier(plugin))) {
         return Promise.resolve(null);
       }
-      return eeLoadCustomVizPlugin(plugin, {
+      return baseLoadCustomVizPlugin(plugin, {
         ...options,
         // Note: in the future we might want to check the domain to check if we need "blank" or "sandbox" mode, to support data apps
         sandboxMode: "blank",
@@ -160,7 +159,7 @@ export function initializeSdkCustomVizPlugin() {
           warnUnknownCustomViz(display);
           return null;
         }
-        return await eeLoadCustomVizPlugin(plugin, {
+        return await baseLoadCustomVizPlugin(plugin, {
           sandboxMode: "blank",
         });
       } catch {
@@ -182,14 +181,14 @@ export function initializeSdkCustomVizPlugin() {
         }
       }, [display, allowed]);
 
-      return eeUseAutoLoadCustomVizPlugin(allowed ? display : undefined, {
+      return baseUseAutoLoadCustomVizPlugin(allowed ? display : undefined, {
         sandboxMode: "blank",
       });
     },
 
     useCustomVizPlugins: (opts?: { enabled?: boolean }) => {
       const allowlist = useAllowlist();
-      const result = eeUseCustomVizPlugins(opts);
+      const result = baseUseCustomVizPlugins(opts);
       // Key on the allowlist contents, not the array identity: the host may
       // pass a new (inline) array on every render.
       const allowlistKey = JSON.stringify(allowlist);

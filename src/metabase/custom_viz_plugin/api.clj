@@ -1,15 +1,15 @@
-(ns metabase-enterprise.custom-viz-plugin.api
+(ns metabase.custom-viz-plugin.api
   "/api/ee/custom-viz-plugin endpoints."
   (:require
    [clj-http.client :as http]
    [clojure.core.async :as a]
-   [metabase-enterprise.custom-viz-plugin.cache :as cache]
-   [metabase-enterprise.custom-viz-plugin.manifest :as manifest]
-   [metabase-enterprise.custom-viz-plugin.models.custom-viz-plugin :as custom-viz-plugin]
-   [metabase-enterprise.custom-viz-plugin.settings :as custom-viz.settings]
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
    [metabase.api.routes.common :refer [+auth]]
+   [metabase.custom-viz-plugin.cache :as cache]
+   [metabase.custom-viz-plugin.manifest :as manifest]
+   [metabase.custom-viz-plugin.models.custom-viz-plugin :as custom-viz-plugin]
+   [metabase.custom-viz-plugin.settings :as custom-viz.settings]
    [metabase.events.core :as events]
    [metabase.server.streaming-response :as sr]
    [metabase.util.log :as log]

@@ -1,4 +1,4 @@
-(ns metabase-enterprise.custom-viz-plugin.test-util
+(ns metabase.custom-viz-plugin.test-util
   "Shared helpers for custom-viz-plugin tests: building in-memory tar+gzip
    archives that match the format `validate-bundle!` expects."
   (:require

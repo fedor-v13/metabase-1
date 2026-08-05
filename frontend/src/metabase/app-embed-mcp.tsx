@@ -16,6 +16,13 @@ import { setBasename } from "metabase/utils/basename";
 // Load EE plugins (whitelabeling, etc.) - no-op in OSS
 import "sdk-iframe-embedding-ee-plugins";
 
+// Custom visualizations ship in every edition, so the no-op-in-OSS EE bundle
+// above can't register them on this path.
+// eslint-disable-next-line import/order
+import { initializeSdkCustomVizPlugin } from "embedding-sdk-bundle/lib/custom-viz/initialize";
+
+initializeSdkCustomVizPlugin();
+
 EMBEDDING_SDK_CONFIG.isEmbeddingSdk = true;
 EMBEDDING_SDK_CONFIG.isMcpApp = true;
 EMBEDDING_SDK_CONFIG.metabaseClientRequestHeader = "mcp-apps";

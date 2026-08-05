@@ -428,8 +428,6 @@ ID of dashboard to use as a homepage.
 
 ### `MB_CUSTOM_VIZ_ENABLED`
 
-> Only available on Metabase [Pro](https://www.metabase.com/product/pro) and [Enterprise](https://www.metabase.com/product/enterprise) plans.
-
 - Type: boolean
 - Default: `false`
 - [Exported as](../installation-and-operation/serialization.md): `custom-viz-enabled`.

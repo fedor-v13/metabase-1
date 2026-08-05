@@ -1,10 +1,10 @@
-(ns ^:synchronous metabase-enterprise.custom-viz-plugin.cache-test
+(ns ^:synchronous metabase.custom-viz-plugin.cache-test
   (:require
    [clojure.test :refer :all]
-   [metabase-enterprise.custom-viz-plugin.cache :as cache]
-   [metabase-enterprise.custom-viz-plugin.settings :as custom-viz.settings]
-   [metabase-enterprise.custom-viz-plugin.test-util :as cvp.tu]
    [metabase.config.core :as config]
+   [metabase.custom-viz-plugin.cache :as cache]
+   [metabase.custom-viz-plugin.settings :as custom-viz.settings]
+   [metabase.custom-viz-plugin.test-util :as cvp.tu]
    [metabase.test :as mt]
    [metabase.util.json :as json]
    [toucan2.core :as t2]))

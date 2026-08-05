@@ -1,4 +1,4 @@
-(ns metabase-enterprise.custom-viz-plugin.models.custom-viz-plugin-test
+(ns metabase.custom-viz-plugin.models.custom-viz-plugin-test
   (:require
    [clojure.test :refer :all]
    [metabase.api.common :as api]

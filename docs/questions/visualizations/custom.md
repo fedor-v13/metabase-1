@@ -5,8 +5,6 @@ summary: Add your own chart types to Metabase by uploading custom visualizations
 
 # Custom visualizations
 
-{% include plans-blockquote.html feature="Custom visualizations" %}
-
 You can build new chart types and add them to Metabase. Here's a calendar heatmap:
 
 ![Calendar heatmap custom visualization](../images/custom-viz-calendar-heatmap.png)

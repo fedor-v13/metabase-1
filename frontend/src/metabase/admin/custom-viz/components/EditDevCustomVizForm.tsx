@@ -4,6 +4,10 @@ import { t } from "ttag";
 
 import { SettingsSection } from "metabase/admin/components/SettingsSection";
 import {
+  useDeleteCustomVizPluginMutation,
+  useSetCustomVizPluginDevUrlMutation,
+} from "metabase/api";
+import {
   Form,
   FormErrorMessage,
   FormProvider,
@@ -11,10 +15,6 @@ import {
   FormTextInput,
 } from "metabase/forms";
 import { Button, Group, Icon, Stack, Text } from "metabase/ui";
-import {
-  useDeleteCustomVizPluginMutation,
-  useSetCustomVizPluginDevUrlMutation,
-} from "metabase-enterprise/api";
 import type { CustomVizPlugin } from "metabase-types/api";
 
 import { CustomVizIcon } from "./CustomVizIcon";
