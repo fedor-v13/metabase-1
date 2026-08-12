@@ -11,6 +11,7 @@
   (:require
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
+   [metabase.custom-viz-plugin.embed-api :as custom-viz.embed]
    [metabase.embedding-rest.api.common :as api.embed.common]
    [metabase.embedding.jwt :as embed]
    [metabase.embedding.validation :as embedding.validation]
@@ -278,3 +279,50 @@
         lon-field        (json/decode+kw lonField)]
     (request/as-admin
       (api.embed.common/process-tiles-query-for-dashcard dashboard dashcard card parameters zoom x y lat-field lon-field))))
+
+;;; -------------------------------- Custom visualizations in the embed preview pane --------------------------------
+
+;; Mirrors of the `/api/embed/.../custom-viz-plugin/*` endpoints so the setup preview pane renders the
+;; same visualizations production will. Like the rest of this namespace they ignore `enable_embedding`
+;; and require a superuser.
+;;
+;; `bundle_url` is deliberately rooted at `/api/embed`, not `/api/preview_embed`: the preview page
+;; reaches the preview routes through the frontend's `rewriteEmbedPreviewUrl` handler, which rebases
+;; `/api/embed/*` for it. Handing back a `/api/preview_embed` url would sail past that rewrite and get
+;; mangled by the static-embed override that runs before it.
+
+(defn- preview-card-custom-viz-displays [token]
+  (let [unsigned-token (check-and-unsign token)]
+    (custom-viz.embed/card-displays [(api.embed.common/unsigned-token->card-id unsigned-token)])))
+
+(defn- preview-dashboard-custom-viz-displays [token]
+  (let [unsigned-token (check-and-unsign token)]
+    (custom-viz.embed/dashboard-displays (api.embed.common/unsigned-token->dashboard-id unsigned-token))))
+
+(api.macros/defendpoint :get "/card/:token/custom-viz-plugin/list" :- [:sequential custom-viz.embed/RuntimeResponse]
+  "List the custom visualization plugins used by a Card you're considering embedding."
+  [{:keys [token]} :- [:map
+                       [:token api.embed.common/EncodedToken]]]
+  (custom-viz.embed/plugins-for-displays (preview-card-custom-viz-displays token)
+                                         (format "/api/embed/card/%s/custom-viz-plugin" token)))
+
+(api.macros/defendpoint :get "/card/:token/custom-viz-plugin/:plugin-id/bundle" :- :any
+  "Serve the JS bundle for a custom visualization used by a Card you're considering embedding."
+  [{:keys [token plugin-id]} :- [:map
+                                 [:token     api.embed.common/EncodedToken]
+                                 [:plugin-id ms/PositiveInt]]]
+  (custom-viz.embed/bundle-response plugin-id (preview-card-custom-viz-displays token)))
+
+(api.macros/defendpoint :get "/dashboard/:token/custom-viz-plugin/list" :- [:sequential custom-viz.embed/RuntimeResponse]
+  "List the custom visualization plugins used by a Dashboard you're considering embedding."
+  [{:keys [token]} :- [:map
+                       [:token api.embed.common/EncodedToken]]]
+  (custom-viz.embed/plugins-for-displays (preview-dashboard-custom-viz-displays token)
+                                         (format "/api/embed/dashboard/%s/custom-viz-plugin" token)))
+
+(api.macros/defendpoint :get "/dashboard/:token/custom-viz-plugin/:plugin-id/bundle" :- :any
+  "Serve the JS bundle for a custom visualization used by a Dashboard you're considering embedding."
+  [{:keys [token plugin-id]} :- [:map
+                                 [:token     api.embed.common/EncodedToken]
+                                 [:plugin-id ms/PositiveInt]]]
+  (custom-viz.embed/bundle-response plugin-id (preview-dashboard-custom-viz-displays token)))

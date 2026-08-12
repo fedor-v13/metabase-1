@@ -7,6 +7,7 @@
    [metabase.analytics.core :as analytics]
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
+   [metabase.custom-viz-plugin.embed-api :as custom-viz.embed]
    [metabase.dashboards-rest.api :as api.dashboard]
    [metabase.dashboards.schema :as dashboards.schema]
    [metabase.events.core :as events]
@@ -846,6 +847,57 @@
                   :js-int-to-string?     false
                   :format-rows?          format_rows
                   :pivot?                pivot_results})))
+
+;;; ------------------------------------------ Custom Visualizations -------------------------------------------------
+
+;; A publicly shared card or dashboard may render a `custom:*` display, whose code lives in an uploaded
+;; plugin bundle. The authenticated plugin endpoints are useless to a logged-out viewer, so these
+;; entity-scoped mirrors serve only the plugins *this* entity actually uses — nothing else is listed,
+;; and no other plugin id resolves under this uuid.
+
+(defn- public-card-custom-viz-displays [uuid]
+  (custom-viz.embed/card-displays
+   [(api/check-404 (t2/select-one-pk :model/Card :public_uuid uuid, :archived false))]))
+
+(defn- public-dashboard-custom-viz-displays [uuid]
+  (custom-viz.embed/dashboard-displays
+   (api/check-404 (t2/select-one-pk :model/Dashboard :public_uuid uuid, :archived false))))
+
+(api.macros/defendpoint :get "/card/:uuid/custom-viz-plugin/list" :- [:sequential custom-viz.embed/RuntimeResponse]
+  "List the custom visualization plugins used by a publicly-accessible Card. Does not require auth
+  credentials. Public sharing must be enabled."
+  [{:keys [uuid]} :- [:map
+                      [:uuid ms/UUIDString]]]
+  (public-sharing.validation/check-public-sharing-enabled)
+  (custom-viz.embed/plugins-for-displays (public-card-custom-viz-displays uuid)
+                                         (format "/api/public/card/%s/custom-viz-plugin" uuid)))
+
+(api.macros/defendpoint :get "/card/:uuid/custom-viz-plugin/:plugin-id/bundle" :- :any
+  "Serve the JS bundle for a custom visualization used by a publicly-accessible Card. 404s for any
+  plugin the Card doesn't use."
+  [{:keys [uuid plugin-id]} :- [:map
+                                [:uuid      ms/UUIDString]
+                                [:plugin-id ms/PositiveInt]]]
+  (public-sharing.validation/check-public-sharing-enabled)
+  (custom-viz.embed/bundle-response plugin-id (public-card-custom-viz-displays uuid)))
+
+(api.macros/defendpoint :get "/dashboard/:uuid/custom-viz-plugin/list" :- [:sequential custom-viz.embed/RuntimeResponse]
+  "List the custom visualization plugins used by a publicly-accessible Dashboard. Does not require auth
+  credentials. Public sharing must be enabled."
+  [{:keys [uuid]} :- [:map
+                      [:uuid ms/UUIDString]]]
+  (public-sharing.validation/check-public-sharing-enabled)
+  (custom-viz.embed/plugins-for-displays (public-dashboard-custom-viz-displays uuid)
+                                         (format "/api/public/dashboard/%s/custom-viz-plugin" uuid)))
+
+(api.macros/defendpoint :get "/dashboard/:uuid/custom-viz-plugin/:plugin-id/bundle" :- :any
+  "Serve the JS bundle for a custom visualization used by a publicly-accessible Dashboard. 404s for any
+  plugin the Dashboard doesn't use."
+  [{:keys [uuid plugin-id]} :- [:map
+                                [:uuid      ms/UUIDString]
+                                [:plugin-id ms/PositiveInt]]]
+  (public-sharing.validation/check-public-sharing-enabled)
+  (custom-viz.embed/bundle-response plugin-id (public-dashboard-custom-viz-displays uuid)))
 
 ;;; ----------------------------------------- Route Definitions & Complaints -----------------------------------------
 

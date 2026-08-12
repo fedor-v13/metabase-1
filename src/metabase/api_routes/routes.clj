@@ -22,6 +22,7 @@
    [metabase.comments.api]
    [metabase.config.core :as config]
    [metabase.custom-viz-plugin.api]
+   [metabase.custom-viz-plugin.sandbox-api]
    [metabase.dashboards-rest.api]
    [metabase.data-studio.api]
    [metabase.documents.api]
@@ -91,6 +92,7 @@
          metabase.comments.api/keep-me
          metabase.collections-rest.api/keep-me
          metabase.custom-viz-plugin.api/keep-me
+         metabase.custom-viz-plugin.sandbox-api/keep-me
          metabase.dashboards-rest.api/keep-me
          metabase.data-studio.api/keep-me
          metabase.documents.api/keep-me
@@ -188,7 +190,10 @@
    "/dataset"              (+auth 'metabase.query-processor.api)
    "/docs"                 (metabase.api.docs/make-routes #'routes)
    "/document"             (+auth metabase.documents.api/routes)
-   "/ee"                   {"/custom-viz-plugin" metabase.custom-viz-plugin.api/routes}
+   ;; `sandbox-api` is tried first: it holds the one custom-viz route that must work for an
+   ;; anonymous embed viewer, and falls thru to the `+auth`-wrapped rest.
+   "/ee"                   {"/custom-viz-plugin" (handlers/routes metabase.custom-viz-plugin.sandbox-api/routes
+                                                                  metabase.custom-viz-plugin.api/routes)}
    "/eid-translation"      (+auth 'metabase.eid-translation.api)
    "/email"                metabase.channel.api/email-routes
    "/embed"                (+message-only-exceptions metabase.embedding-rest.api/embedding-routes)

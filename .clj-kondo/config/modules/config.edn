@@ -691,7 +691,9 @@
   custom-viz-plugin
   {:team "Gadget"
    :api  #{metabase.custom-viz-plugin.api
+           metabase.custom-viz-plugin.embed-api
            metabase.custom-viz-plugin.init
+           metabase.custom-viz-plugin.sandbox-api
            metabase.custom-viz-plugin.settings}
    :uses #{api
            config
@@ -700,6 +702,9 @@
            server
            settings
            util}
+   :model-imports #{:model/Card
+                    :model/DashboardCard
+                    :model/DashboardCardSeries}
    :model-exports #{:model/CustomVizPlugin}}
 
   dashboards
@@ -963,6 +968,7 @@
   {:team "Embedding"
    :api  #{metabase.embedding-rest.api}
    :uses #{api
+           custom-viz-plugin
            dashboards
            database-routing
            eid-translation
@@ -1660,6 +1666,7 @@
    :uses #{actions
            analytics
            api
+           custom-viz-plugin
            dashboards
            dashboards-rest
            events

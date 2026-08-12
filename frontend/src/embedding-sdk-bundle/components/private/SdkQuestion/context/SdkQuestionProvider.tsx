@@ -371,7 +371,7 @@ export const SdkQuestionProvider = ({
 
   return (
     <SdkQuestionContext.Provider value={questionContext}>
-      <EmbeddingEntityContextProvider uuid={null} token={token}>
+      <EmbeddingEntityContextProvider uuid={null} token={token} entityType="card">
         <QuestionAlertModalProvider>
           <EmbeddingDataPickerContextProvider
             dataPicker={dataPicker}

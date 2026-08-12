@@ -9,6 +9,7 @@
    [metabase.custom-viz-plugin.cache :as cache]
    [metabase.custom-viz-plugin.manifest :as manifest]
    [metabase.custom-viz-plugin.models.custom-viz-plugin :as custom-viz-plugin]
+   [metabase.custom-viz-plugin.runtime :as custom-viz.runtime]
    [metabase.custom-viz-plugin.settings :as custom-viz.settings]
    [metabase.events.core :as events]
    [metabase.server.streaming-response :as sr]
@@ -64,46 +65,20 @@
    [:created_at      :any]
    [:updated_at      :any]])
 
-(def ^:private CustomVizPluginRuntimeResponse
-  [:map
-   [:id              ms/PositiveInt]
-   [:identifier      ms/NonBlankString]
-   [:display_name    ms/NonBlankString]
-   [:icon            {:optional true} [:maybe :string]]
-   [:bundle_url      ms/NonBlankString]
-   [:bundle_hash     {:optional true} [:maybe :string]]
-   [:dev_bundle_url  {:optional true} [:maybe :string]]
-   [:manifest        {:optional true} [:maybe :any]]])
-
 ;;; ------------------------------------------------ Helpers ------------------------------------------------
 
-(defn- dev-only-plugin?
-  "Returns true if the plugin has no uploaded bundle and is served from a dev URL."
-  [plugin]
-  (nil? (:bundle_hash plugin)))
+(def ^:private bundle-base-path
+  "Route the authenticated `/list` endpoint points `bundle_url` at. Embed callers pass their own
+   entity-scoped base path instead."
+  "/api/ee/custom-viz-plugin")
 
 (defn- plugin->response
   "Convert a plugin record to API response format."
   [plugin]
   (-> plugin
-      (assoc :dev_only (dev-only-plugin? plugin))
+      (assoc :dev_only (custom-viz.runtime/dev-only-plugin? plugin))
       ;; never expose the raw bundle bytes
       (dissoc :bundle)))
-
-(defn- plugin->runtime-response
-  "Convert a plugin record to the safe runtime response shape.
-   `bundle_url` is suffixed with `?v=<bundle_hash>` so that a re-uploaded bundle is fetched
-   instead of served from the browser's `immutable` cache."
-  [{:keys [id identifier display_name icon bundle_hash manifest dev_bundle_url]}]
-  (cond-> {:id           id
-           :identifier   identifier
-           :display_name display_name
-           :icon         icon
-           :bundle_url   (cond-> (format "/api/ee/custom-viz-plugin/%d/bundle" id)
-                           bundle_hash (str "?v=" bundle_hash))
-           :bundle_hash  bundle_hash
-           :manifest     manifest}
-    dev_bundle_url (assoc :dev_bundle_url dev_bundle_url)))
 
 ;;; ------------------------------------------------ Endpoints ------------------------------------------------
 
@@ -187,19 +162,14 @@
   (->> (custom-viz-plugin/select-non-blob {:order-by [[:display_name :asc]]})
        (mapv (comp plugin->response api/read-check))))
 
-(api.macros/defendpoint :get "/list" :- [:sequential CustomVizPluginRuntimeResponse]
+(api.macros/defendpoint :get "/list" :- [:sequential custom-viz.runtime/RuntimeResponse]
   "List active and enabled custom visualization plugins. Available to any authenticated user.
    Plugins with incompatible Metabase version requirements are excluded.
    Dev-only plugins are excluded when dev mode is disabled."
   []
-  (let [dev-mode? (custom-viz.settings/custom-viz-plugin-dev-mode-enabled)
-        plugins   (custom-viz-plugin/select-non-blob :status :active
-                                                     :enabled true
-                                                     {:order-by [[:display_name :asc]]})]
-    (->> plugins
-         (filter manifest/compatible?)
-         (remove #(and (not dev-mode?) (dev-only-plugin? %)))
-         (mapv (comp plugin->runtime-response api/read-check)))))
+  (->> (custom-viz.runtime/loadable-plugins)
+       (map api/read-check)
+       (mapv #(custom-viz.runtime/plugin->runtime-response % bundle-base-path))))
 
 (api.macros/defendpoint :delete "/:id" :- :nil
   "Remove a custom visualization plugin and evict its on-disk cache."
@@ -260,35 +230,6 @@
           (plugin->response (dissoc result :bundle))))
       (finally
         (try (.delete tempfile) (catch Exception _))))))
-
-(def ^:private sandbox-host-html
-  "Minimal HTML doc that the patched `@locker/near-membrane-dom` loads as the iframe document
-   so plugin code can be `eval`'d under a relaxed, per-iframe CSP."
-  "<!doctype html><html><head><meta charset=\"utf-8\"></head><body></body></html>")
-
-(def ^:private sandbox-host-csp
-  "CSP applied ONLY to the sandbox iframe document.
-   - `'unsafe-eval'` required by near-membrane to evaluate plugin code inside the realm.
-   - `frame-ancestors 'self'` - so Metabase can embed this document."
-  (str "default-src 'none'; "
-       "script-src 'unsafe-eval'; "
-       "frame-ancestors 'self';"))
-
-(api.macros/defendpoint :get "/sandbox-host" :- :any
-  "Serve a minimal HTML document used as the iframe `src` for the near-membrane custom-viz
-   sandbox. The response carries a per-document `Content-Security-Policy` that permits
-   `'unsafe-eval'` only inside this iframe, so the main Metabase document keeps its strict
-   nonce-based CSP."
-  []
-  {:status  200
-   :headers {"Content-Type"                 "text/html; charset=utf-8"
-             "Content-Security-Policy"      sandbox-host-csp
-             "X-Frame-Options"              "SAMEORIGIN"
-             "X-Content-Type-Options"       "nosniff"
-             "Cross-Origin-Resource-Policy" "same-origin"
-             "Referrer-Policy"              "no-referrer"
-             "Cache-Control"                "public, max-age=60"}
-   :body    sandbox-host-html})
 
 (api.macros/defendpoint :get "/:id/bundle" :- :any
   "Serve the JS bundle for a plugin from the on-disk cache.
@@ -405,7 +346,7 @@
    to `/:id/bundle`."
   [{:keys [id]} :- [:map [:id ms/PositiveInt]]]
   (let [plugin (api/write-check (custom-viz-plugin/select-one-non-blob :id id))]
-    (api/check-400 (dev-only-plugin? plugin)
+    (api/check-400 (custom-viz.runtime/dev-only-plugin? plugin)
                    "Refresh is only supported for dev-only plugins; upload a new bundle to update an upload-backed plugin.")
     (let [dev-url      (or (cache/resolve-dev-bundle id)
                            (throw (ex-info "No dev server URL configured" {:status-code 404})))

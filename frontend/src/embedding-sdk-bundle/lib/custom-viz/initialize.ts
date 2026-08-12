@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useSdkSelector } from "embedding-sdk-bundle/store";
+import { getIsGuestEmbed } from "embedding-sdk-bundle/store/selectors";
 import { useMetabaseProviderPropsStore } from "embedding-sdk-shared/hooks/use-metabase-provider-props-store";
 import { ensureMetabaseProviderPropsStore } from "embedding-sdk-shared/lib/ensure-metabase-provider-props-store";
 import { customVizPluginApi } from "metabase/api/custom-viz-plugin";
@@ -21,10 +23,12 @@ import {
   getCustomPluginIdentifier,
   getPluginAssetUrl,
 } from "metabase/visualizations/custom-visualizations/custom-viz-utils";
+import type { SandboxMode } from "metabase/visualizations/custom-visualizations/sandbox";
 import { isWidgetMount } from "metabase/visualizations/custom-visualizations/widget-mount";
 import type {
   CustomVizPluginId,
   CustomVizPluginRuntime,
+  ListEmbeddedCustomVizPluginsRequest,
   VisualizationDisplay,
 } from "metabase-types/api";
 import { isCustomVizDisplay } from "metabase-types/guards/visualization";
@@ -46,14 +50,56 @@ function getAllowlist(): string[] {
 }
 
 /**
- * Whether `display` is an allowed `custom:*` visualization. False for
- * non-custom displays and for custom ones missing from the allowlist.
+ * Mirror of the last `sdk.isGuestEmbed` any of the hook overrides below saw.
+ *
+ * `loadCustomVizPlugin` is called from effects, with no React context to read
+ * the SDK store from, and the props store isn't populated on the web-component
+ * path (guest embeds render through `ComponentProvider`, which never calls
+ * `setProps`). Every path that can reach it has already rendered a component
+ * that read `useIsGuestEmbed`, so this is in sync by the time it's used.
  */
-function isCustomVizAllowed(
+let lastSeenGuestEmbed = false;
+
+/**
+ * In the npm SDK, `allowedCustomVisualizations` is the host developer's opt-in
+ * to running third-party JS inside their own page, so defaulting to "none" is
+ * right. A guest embed is different: it renders in a Metabase-origin iframe with
+ * a signed JWT already scoping what the viewer may see, and the web-component
+ * host never gets a chance to pass the prop — defaulting to "none" there would
+ * mean custom visualizations could never render. So in guest-embed mode the
+ * JWT's entity scope is the authorization, and an allowlist, when the host does
+ * supply one, only narrows things further.
+ */
+function useIsGuestEmbed(): boolean {
+  const guestEmbed = useSdkSelector(getIsGuestEmbed);
+  lastSeenGuestEmbed = guestEmbed;
+  return guestEmbed;
+}
+
+/**
+ * A guest embed is served from a Metabase-origin page under Metabase's strict
+ * no-`unsafe-eval` CSP, which is exactly what the hosted sandbox document exists
+ * for. The npm SDK renders in the host's own page, where `about:blank` works.
+ */
+function sandboxModeFor(guestEmbed: boolean): SandboxMode {
+  return guestEmbed ? "hosted" : "blank";
+}
+
+/**
+ * Whether a `custom:*` plugin identifier passes the allowlist. Non-custom
+ * displays are never "allowed" in this sense — callers handle them separately.
+ */
+function isAllowedByAllowlist(
   display: string | undefined,
   allowlist: string[],
+  guestEmbed: boolean,
 ): boolean {
-  return isCustomVizDisplay(display) && allowlist.includes(display);
+  if (!isCustomVizDisplay(display)) {
+    return false;
+  }
+  return guestEmbed && allowlist.length === 0
+    ? true
+    : allowlist.includes(display);
 }
 
 const warnedUnknownCustomViz = new Set<string>();
@@ -131,26 +177,43 @@ export function initializeSdkCustomVizPlugin() {
       options: LoadCustomVizPluginOptions = {},
     ) => {
       // We should only be calling this for allowed plugins, but this checks again to be safer
-      if (!getAllowlist().includes(getCustomPluginIdentifier(plugin))) {
+      const guestEmbed = lastSeenGuestEmbed;
+      if (
+        !isAllowedByAllowlist(
+          getCustomPluginIdentifier(plugin),
+          getAllowlist(),
+          guestEmbed,
+        )
+      ) {
         return Promise.resolve(null);
       }
       return baseLoadCustomVizPlugin(plugin, {
         ...options,
         // Note: in the future we might want to check the domain to check if we need "blank" or "sandbox" mode, to support data apps
-        sandboxMode: "blank",
+        sandboxMode: sandboxModeFor(guestEmbed),
       });
     },
 
     loadCustomVizPluginForDisplay: async (
       dispatch: DispatchFn,
       display: string,
+      embedRequest?: ListEmbeddedCustomVizPluginsRequest,
     ): Promise<string | null> => {
-      if (!isCustomVizAllowed(display, getAllowlist())) {
+      // An `embedRequest` only exists in guest-embed mode, so it is the
+      // authoritative signal here — no need for the mirrored flag.
+      const guestEmbed = Boolean(embedRequest) || lastSeenGuestEmbed;
+      if (!isAllowedByAllowlist(display, getAllowlist(), guestEmbed)) {
         return null;
       }
       const identifier = display.slice("custom:".length);
       const action = dispatch(
-        customVizPluginApi.endpoints.listCustomVizPlugins.initiate(undefined),
+        embedRequest
+          ? customVizPluginApi.endpoints.listEmbeddedCustomVizPlugins.initiate(
+              embedRequest,
+            )
+          : customVizPluginApi.endpoints.listCustomVizPlugins.initiate(
+              undefined,
+            ),
       );
       try {
         const plugins = await action.unwrap();
@@ -160,7 +223,7 @@ export function initializeSdkCustomVizPlugin() {
           return null;
         }
         return await baseLoadCustomVizPlugin(plugin, {
-          sandboxMode: "blank",
+          sandboxMode: sandboxModeFor(guestEmbed),
         });
       } catch {
         return null;
@@ -171,9 +234,11 @@ export function initializeSdkCustomVizPlugin() {
 
     useAutoLoadCustomVizPlugin: (display: string | undefined) => {
       const allowlist = useAllowlist();
+      const guestEmbed = useIsGuestEmbed();
       const allowed =
         // Regular (non-custom) displays are always allowed.
-        !isCustomVizDisplay(display) || isCustomVizAllowed(display, allowlist);
+        !isCustomVizDisplay(display) ||
+        isAllowedByAllowlist(display, allowlist, guestEmbed);
 
       useEffect(() => {
         if (isCustomVizDisplay(display) && !allowed) {
@@ -182,12 +247,13 @@ export function initializeSdkCustomVizPlugin() {
       }, [display, allowed]);
 
       return baseUseAutoLoadCustomVizPlugin(allowed ? display : undefined, {
-        sandboxMode: "blank",
+        sandboxMode: sandboxModeFor(guestEmbed),
       });
     },
 
     useCustomVizPlugins: (opts?: { enabled?: boolean }) => {
       const allowlist = useAllowlist();
+      const guestEmbed = useIsGuestEmbed();
       const result = baseUseCustomVizPlugins(opts);
       // Key on the allowlist contents, not the array identity: the host may
       // pass a new (inline) array on every render.
@@ -198,10 +264,14 @@ export function initializeSdkCustomVizPlugin() {
       const plugins = useMemo(
         () =>
           result.plugins?.filter((p) =>
-            allowlist.includes(getCustomPluginIdentifier(p)),
+            isAllowedByAllowlist(
+              getCustomPluginIdentifier(p),
+              allowlist,
+              guestEmbed,
+            ),
           ) ?? [],
         // eslint-disable-next-line react-hooks/exhaustive-deps -- allowlistKey stands in for `allowlist`
-        [result.plugins, allowlistKey],
+        [result.plugins, allowlistKey, guestEmbed],
       );
 
       // Warn the developers of the host app if they're passing a custom viz that we haven't found in the instance
@@ -224,6 +294,7 @@ export function initializeSdkCustomVizPlugin() {
     useCustomVizPluginsIcon: () => {
       const [blobs, setBlobs] = useState(new Map<CustomVizPluginId, string>());
       const allowlist = useAllowlist();
+      const guestEmbed = useIsGuestEmbed();
 
       const { plugins, isLoading } = useCustomVizPlugins();
 
@@ -233,8 +304,11 @@ export function initializeSdkCustomVizPlugin() {
         let cancelled = false;
         const toResolve = (plugins ?? []).filter(
           (plugin) =>
-            isCustomVizAllowed(getCustomPluginIdentifier(plugin), allowlist) &&
-            plugin.icon,
+            isAllowedByAllowlist(
+              getCustomPluginIdentifier(plugin),
+              allowlist,
+              guestEmbed,
+            ) && plugin.icon,
         );
         Promise.all(
           toResolve.map(
@@ -277,7 +351,10 @@ export function initializeSdkCustomVizPlugin() {
           );
 
           // not an allowed custom-viz plugin: no icon
-          if (!currentPlugin || !isCustomVizAllowed(display, allowlist)) {
+          if (
+            !currentPlugin ||
+            !isAllowedByAllowlist(display, allowlist, guestEmbed)
+          ) {
             return { icon: undefined, isLoading: false };
           }
 

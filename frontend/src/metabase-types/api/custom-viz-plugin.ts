@@ -36,6 +36,17 @@ export interface CustomVizPluginRuntime {
   manifest?: CustomVizPluginManifest | null;
 }
 
+/**
+ * Addresses the entity-scoped plugin routes an embed viewer uses: the shared
+ * card/dashboard is identified by its public `uuid` or its signed `token`, and
+ * only the plugins that entity renders are listed.
+ */
+export interface ListEmbeddedCustomVizPluginsRequest {
+  entityType: "card" | "dashboard";
+  uuid: string | null;
+  token: string | null;
+}
+
 export interface CreateCustomVizPluginRequest {
   file: File;
 }

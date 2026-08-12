@@ -4,6 +4,7 @@ import type {
   CustomVizPlugin,
   CustomVizPluginId,
   CustomVizPluginRuntime,
+  ListEmbeddedCustomVizPluginsRequest,
   ReplaceCustomVizPluginBundleRequest,
   UpdateCustomVizPluginRequest,
 } from "metabase-types/api";
@@ -11,12 +12,44 @@ import type {
 import { Api } from "./api";
 import { idTag, invalidateTags, listTag } from "./tags";
 
+/**
+ * A signed token wins over a uuid. In practice only one is ever set — static and
+ * guest embeds carry a `token`, public links a `uuid` — but preferring the token
+ * keeps the signed route authoritative if both somehow arrive.
+ */
+const getEmbeddedCustomVizPluginListUrl = ({
+  entityType,
+  uuid,
+  token,
+}: ListEmbeddedCustomVizPluginsRequest) =>
+  token
+    ? `/api/embed/${entityType}/${token}/custom-viz-plugin/list`
+    : `/api/public/${entityType}/${uuid}/custom-viz-plugin/list`;
+
 export const customVizPluginApi = Api.injectEndpoints({
   endpoints: (builder) => ({
     listCustomVizPlugins: builder.query<CustomVizPluginRuntime[], void>({
       query: () => ({
         method: "GET",
         url: "/api/ee/custom-viz-plugin/list",
+      }),
+      providesTags: (plugins = []) => [
+        listTag("custom-viz-plugin"),
+        ...plugins.map((plugin) => idTag("custom-viz-plugin", plugin.id)),
+      ],
+    }),
+    /**
+     * The plugins used by one publicly-shared or embedded entity. The URL is
+     * already rooted at `/api/public` or `/api/embed`, so the embed request
+     * override leaves it alone.
+     */
+    listEmbeddedCustomVizPlugins: builder.query<
+      CustomVizPluginRuntime[],
+      ListEmbeddedCustomVizPluginsRequest
+    >({
+      query: (request) => ({
+        method: "GET",
+        url: getEmbeddedCustomVizPluginListUrl(request),
       }),
       providesTags: (plugins = []) => [
         listTag("custom-viz-plugin"),
@@ -137,6 +170,7 @@ export const customVizPluginApi = Api.injectEndpoints({
 
 export const {
   useListCustomVizPluginsQuery,
+  useListEmbeddedCustomVizPluginsQuery,
   useListAllCustomVizPluginsQuery,
   useCreateCustomVizPluginMutation,
   useCreateDevCustomVizPluginMutation,

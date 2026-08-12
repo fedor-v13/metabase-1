@@ -209,7 +209,7 @@ export const PublicOrEmbeddedQuestion = ({
       locale={canWhitelabel ? locale : undefined}
       shouldWaitForLocale
     >
-      <EmbeddingEntityContextProvider uuid={uuid} token={token}>
+      <EmbeddingEntityContextProvider uuid={uuid} token={token} entityType="card">
         <PublicOrEmbeddedQuestionView
           initialized={initialized}
           card={card}

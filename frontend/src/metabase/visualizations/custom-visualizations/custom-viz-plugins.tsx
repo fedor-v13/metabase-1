@@ -9,7 +9,11 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "ttag";
 
-import { useListCustomVizPluginsQuery } from "metabase/api";
+import {
+  skipToken,
+  useListCustomVizPluginsQuery,
+  useListEmbeddedCustomVizPluginsQuery,
+} from "metabase/api";
 import { api } from "metabase/api/client";
 import { ExplicitSize } from "metabase/common/components/ExplicitSize";
 import { useToast } from "metabase/common/hooks";
@@ -83,18 +87,37 @@ export function unregisterCustomVizDisplay(display: VisualizationDisplay) {
 
 /**
  * Hook that fetches the list of active custom visualization plugins.
+ *
+ * An embed viewer has no session, so the instance-wide list endpoint is not an
+ * option there. When the embedding context names an entity we read the
+ * entity-scoped list instead, which serves only the plugins the shared
+ * card/dashboard actually renders. An embedding context with an identifier but
+ * no `entityType` (public documents) has no scoped route to read, so it loads
+ * nothing and its `custom:*` cards fall back to the default visualization.
  */
 export function useCustomVizPlugins({
   enabled = true,
 }: { enabled?: boolean } = {}) {
-  const { token, uuid } = useEmbeddingEntityContext();
-  const isPublicOrStaticEmbed = Boolean(token || uuid);
-  const shouldLoad = enabled && !isPublicOrStaticEmbed;
-  const { data: plugins, isLoading } = useListCustomVizPluginsQuery(undefined, {
-    skip: !shouldLoad,
-  });
+  const { token, uuid, entityType } = useEmbeddingEntityContext();
+  const isEmbedded = Boolean(token || uuid);
+  const embeddedRequest =
+    enabled && isEmbedded && entityType
+      ? { entityType, uuid: uuid ?? null, token: token ?? null }
+      : skipToken;
 
-  return { plugins, isLoading, disabled: isPublicOrStaticEmbed };
+  const authedQuery = useListCustomVizPluginsQuery(undefined, {
+    skip: !enabled || isEmbedded,
+  });
+  const embeddedQuery = useListEmbeddedCustomVizPluginsQuery(embeddedRequest);
+
+  const { data: plugins, isLoading } = isEmbedded ? embeddedQuery : authedQuery;
+
+  return {
+    plugins,
+    isLoading,
+    // No endpoint to read from at all, so `plugins` will never arrive.
+    unavailable: isEmbedded && !entityType,
+  };
 }
 
 /**
@@ -173,7 +196,7 @@ export function useAutoLoadCustomVizPlugin(
   loading: boolean;
 } {
   const { sandboxMode = "hosted" } = options;
-  const { plugins, disabled } = useCustomVizPlugins();
+  const { plugins, unavailable } = useCustomVizPlugins();
   const [sendToast] = useToast();
   const [loading, setLoadingState] = useState(false);
   const loadingRef = useRef<string | null>(null);
@@ -246,10 +269,9 @@ export function useAutoLoadCustomVizPlugin(
 
   const needsCustomViz = isCustomVizDisplay(display);
 
-  /**
-   * Short-circuit if custom-viz plugins are disabled (e.g., public or embedded questions/dashboards).
-   */
-  if (disabled) {
+  // Nothing will ever load here, so resolve rather than spin forever — the
+  // visualization registry falls back to the default.
+  if (unavailable) {
     return { loading: false };
   }
 
