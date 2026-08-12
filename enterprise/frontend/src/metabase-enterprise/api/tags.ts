@@ -30,7 +30,6 @@ import {
 
 export const ENTERPRISE_TAG_TYPES = [
   ...TAG_TYPES,
-  "custom-viz-plugin",
   "scim",
   "gsheets-status",
   "sandbox",

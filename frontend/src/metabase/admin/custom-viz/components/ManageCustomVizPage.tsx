@@ -2,6 +2,10 @@ import { useCallback, useMemo } from "react";
 import { t } from "ttag";
 
 import { SettingsPageWrapper } from "metabase/admin/components/SettingsSection";
+import {
+  useDeleteCustomVizPluginMutation,
+  useListAllCustomVizPluginsQuery,
+} from "metabase/api";
 import { useAdminSetting } from "metabase/api/utils";
 import { Link } from "metabase/common/components/Link";
 import { useHasTokenFeature } from "metabase/common/hooks";
@@ -19,10 +23,6 @@ import {
   Title,
 } from "metabase/ui";
 import * as Urls from "metabase/urls";
-import {
-  useDeleteCustomVizPluginMutation,
-  useListAllCustomVizPluginsQuery,
-} from "metabase-enterprise/api";
 import type { CustomVizPluginId } from "metabase-types/api";
 
 import { trackCustomVizPluginDeleted } from "../analytics";

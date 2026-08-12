@@ -353,12 +353,10 @@
   "Should we offer users the Metabase-managed AI provider?"
   :offer-metabase-ai-managed)
 
-(defenterprise enable-custom-viz?
-  "Should we enable custom visualizations? OSS falls back to `false`; the EE implementation checks the
-  `custom-viz-enabled` setting and the `:custom-viz` premium feature."
-  metabase-enterprise.custom-viz-plugin.settings
+(defn enable-custom-viz?
+  "Whether custom visualizations are enabled — i.e. whether an admin has opted in via `custom-viz-enabled`."
   []
-  false)
+  (boolean ((requiring-resolve 'metabase.custom-viz-plugin.settings/custom-viz-enabled))))
 
 (define-premium-feature enable-data-complexity-score?
   "Should we expose Data Complexity Score?"
@@ -393,7 +391,7 @@
    :content_translation            (enable-content-translation?)
    :content_verification           (enable-content-verification?)
    :custom-viz                     (enable-custom-viz?)
-   :custom-viz-available           (has-feature? :custom-viz)
+   :custom-viz-available           true
    :data-complexity-score          (enable-data-complexity-score?)
    :dashboard_subscription_filters (enable-dashboard-subscription-filters?)
    :database_auth_providers        (enable-database-auth-providers?)

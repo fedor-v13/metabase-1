@@ -1,4 +1,4 @@
-(ns metabase-enterprise.custom-viz-plugin.models.custom-viz-plugin
+(ns metabase.custom-viz-plugin.models.custom-viz-plugin
   (:require
    [buddy.core.codecs :as codecs]
    [metabase.api.common :as api]

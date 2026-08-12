@@ -1,8 +1,8 @@
-(ns metabase-enterprise.custom-viz-plugin.manifest-test
+(ns metabase.custom-viz-plugin.manifest-test
   (:require
    [clojure.test :refer :all]
-   [metabase-enterprise.custom-viz-plugin.manifest :as manifest]
-   [metabase.config.core :as config]))
+   [metabase.config.core :as config]
+   [metabase.custom-viz-plugin.manifest :as manifest]))
 
 (deftest parse-manifest-test
   (testing "parses valid JSON"

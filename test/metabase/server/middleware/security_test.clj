@@ -660,7 +660,7 @@
            (mw.security/parse-allowed-resource-hosts "asdf/wasd/:8000 */localhost:*")))))
 
 (deftest csp-img-enabled-setter-oss-test
-  (testing "csp-img-enabled can be turned on/off freely when no enterprise custom-viz setter is loaded"
+  (testing "csp-img-enabled can be turned on/off freely while custom visualizations are disabled"
     (mt/with-temporary-setting-values [csp-img-enabled false]
       (server.settings/csp-img-enabled! true)
       (is (true? (server.settings/csp-img-enabled)))

@@ -1,4 +1,4 @@
-(ns metabase-enterprise.custom-viz-plugin.cache
+(ns metabase.custom-viz-plugin.cache
   "Storage layer for custom visualization plugin bundles.
 
    Plugins are uploaded as tar+gzip archives. The raw archive bytes (and their
@@ -15,10 +15,10 @@
    [buddy.core.hash :as buddy-hash]
    [clj-http.client :as http]
    [clojure.string :as str]
-   [metabase-enterprise.custom-viz-plugin.manifest :as manifest]
-   [metabase-enterprise.custom-viz-plugin.models.custom-viz-plugin :as custom-viz-plugin]
-   [metabase-enterprise.custom-viz-plugin.settings :as custom-viz.settings]
    [metabase.config.core :as config]
+   [metabase.custom-viz-plugin.manifest :as manifest]
+   [metabase.custom-viz-plugin.models.custom-viz-plugin :as custom-viz-plugin]
+   [metabase.custom-viz-plugin.settings :as custom-viz.settings]
    [metabase.util :as u]
    [metabase.util.compress :as u.compress]
    [metabase.util.files :as u.files]
@@ -278,7 +278,7 @@
 
 (defn- asset-whitelisted?
   "Check whether an asset path is servable for the plugin. Only the manifest `icon`
-   is servable — see [[metabase-enterprise.custom-viz-plugin.manifest/asset-paths]]."
+   is servable — see [[metabase.custom-viz-plugin.manifest/asset-paths]]."
   [{:keys [manifest]} ^String asset-path]
   (when manifest
     (let [allowed (set (manifest/asset-paths manifest))]

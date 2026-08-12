@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { t } from "ttag";
 
 import { SettingsSection } from "metabase/admin/components/SettingsSection";
+import { useCreateDevCustomVizPluginMutation } from "metabase/api";
 import {
   Form,
   FormErrorMessage,
@@ -10,7 +11,6 @@ import {
   FormTextInput,
 } from "metabase/forms";
 import { Group, Stack } from "metabase/ui";
-import { useCreateDevCustomVizPluginMutation } from "metabase-enterprise/api";
 
 type FormState = {
   devBundleUrl: string;

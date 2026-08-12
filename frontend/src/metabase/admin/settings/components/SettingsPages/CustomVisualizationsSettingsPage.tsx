@@ -1,12 +1,14 @@
 import { jt, t } from "ttag";
 
 import { SettingsPageWrapper } from "metabase/admin/components/SettingsSection";
+import { CustomVizDevPage } from "metabase/admin/custom-viz/components/CustomVizDevPage";
+import { CustomVizPage } from "metabase/admin/custom-viz/components/CustomVizPage";
+import { ManageCustomVizPage } from "metabase/admin/custom-viz/components/ManageCustomVizPage";
 import { UpsellCustomViz } from "metabase/admin/upsells";
 import { useAdminSetting } from "metabase/api/utils";
 import { Link } from "metabase/common/components/Link";
 import { useHasTokenFeature } from "metabase/common/hooks";
 import { useMetadataToasts } from "metabase/metadata/hooks";
-import { PLUGIN_CUSTOM_VIZ } from "metabase/plugins";
 import {
   Alert,
   Button,
@@ -37,7 +39,7 @@ export function CustomVisualizationsManagePage() {
     return <CustomVizEmptyState />;
   }
 
-  return <PLUGIN_CUSTOM_VIZ.ManageCustomVizPage />;
+  return <ManageCustomVizPage />;
 }
 
 export function CustomVisualizationsFormPage({
@@ -60,7 +62,7 @@ export function CustomVisualizationsFormPage({
     return <CustomVizEmptyState />;
   }
 
-  return <PLUGIN_CUSTOM_VIZ.CustomVizPage params={params} />;
+  return <CustomVizPage params={params} />;
 }
 
 export function CustomVisualizationsDevelopmentPage() {
@@ -79,7 +81,7 @@ export function CustomVisualizationsDevelopmentPage() {
     return <CustomVizEmptyState />;
   }
 
-  return <PLUGIN_CUSTOM_VIZ.CustomVizDevPage />;
+  return <CustomVizDevPage />;
 }
 
 const CUSTOM_VIZ_ENABLED_SETTING = "custom-viz-enabled";

@@ -1,9 +1,9 @@
-(ns metabase-enterprise.custom-viz-plugin.cross-setting-test
+(ns metabase.custom-viz-plugin.cross-setting-test
   "Cross-setting constraints between `custom-viz-enabled` (enterprise) and
   `csp-img-enabled` (OSS)."
   (:require
    [clojure.test :refer :all]
-   [metabase-enterprise.custom-viz-plugin.settings :as custom-viz.settings]
+   [metabase.custom-viz-plugin.settings :as custom-viz.settings]
    [metabase.premium-features.test-util :as tu]
    [metabase.server.settings :as server.settings]
    [metabase.test :as mt]))

@@ -13,6 +13,7 @@ export const TAG_TYPES = [
   "collection",
   "collection-tree",
   "content-translation",
+  "custom-viz-plugin",
   "dashboard",
   "dashboard-question-candidates",
   "database",

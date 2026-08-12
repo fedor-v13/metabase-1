@@ -21,6 +21,7 @@
    [metabase.collections-rest.api]
    [metabase.comments.api]
    [metabase.config.core :as config]
+   [metabase.custom-viz-plugin.api]
    [metabase.dashboards-rest.api]
    [metabase.data-studio.api]
    [metabase.documents.api]
@@ -89,6 +90,7 @@
          metabase.cloud-migration.api/keep-me
          metabase.comments.api/keep-me
          metabase.collections-rest.api/keep-me
+         metabase.custom-viz-plugin.api/keep-me
          metabase.dashboards-rest.api/keep-me
          metabase.data-studio.api/keep-me
          metabase.documents.api/keep-me
@@ -186,6 +188,7 @@
    "/dataset"              (+auth 'metabase.query-processor.api)
    "/docs"                 (metabase.api.docs/make-routes #'routes)
    "/document"             (+auth metabase.documents.api/routes)
+   "/ee"                   {"/custom-viz-plugin" metabase.custom-viz-plugin.api/routes}
    "/eid-translation"      (+auth 'metabase.eid-translation.api)
    "/email"                metabase.channel.api/email-routes
    "/embed"                (+message-only-exceptions metabase.embedding-rest.api/embedding-routes)

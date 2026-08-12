@@ -30,6 +30,7 @@ import { OverlayStackProvider } from "metabase/ui/components/overlays/overlay-st
 import { EmotionCacheProvider } from "metabase/ui/components/theme/EmotionCacheProvider";
 import { initializePlugins } from "sdk-ee-plugins";
 
+import { initializeSdkCustomVizPlugin } from "../../../lib/custom-viz/initialize";
 import { SCOPED_CSS_RESET } from "../../private/PublicComponentStylesWrapper";
 import { SdkFontsGlobalStyles } from "../../private/SdkGlobalFontsStyles";
 import { PortalContainer } from "../../private/SdkPortalContainer";
@@ -61,6 +62,7 @@ function useInitPlugins(reduxStore: SdkStore) {
     hasInitializedPlugins = true;
 
     initializePlugins();
+    initializeSdkCustomVizPlugin();
   }
 
   // Dispatch is deferred to an effect to avoid scheduling updates on other

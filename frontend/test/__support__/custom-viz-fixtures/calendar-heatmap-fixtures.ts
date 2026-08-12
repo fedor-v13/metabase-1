@@ -4,7 +4,7 @@ import { DateTimeColumn, NumberColumn } from "__support__/visualizations";
 import {
   getCustomPluginIdentifier,
   loadCustomVizPlugin,
-} from "metabase-enterprise/custom_viz/custom-viz-plugins";
+} from "metabase/visualizations/custom-visualizations/custom-viz-plugins";
 import type { RowValues } from "metabase-types/api";
 import { createMockColumn } from "metabase-types/api/mocks";
 

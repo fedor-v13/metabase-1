@@ -5,8 +5,9 @@ import {
   measureTextHeight,
   measureTextWidth,
 } from "metabase/utils/measure-text";
-import { formatValue } from "metabase/visualizations/custom-visualizations/custom-viz-utils";
 import { customVizColumnTypes } from "metabase-lib/v1/types/utils/custom-viz-column-types";
+
+import { formatValue } from "./custom-viz-utils";
 
 declare global {
   interface Window {

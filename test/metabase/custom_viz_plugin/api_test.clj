@@ -1,12 +1,12 @@
-(ns ^:synchronous metabase-enterprise.custom-viz-plugin.api-test
+(ns ^:synchronous metabase.custom-viz-plugin.api-test
   (:require
    [clj-http.client :as http]
    [clojure.string :as str]
    [clojure.test :refer :all]
-   [metabase-enterprise.custom-viz-plugin.cache :as cache]
-   [metabase-enterprise.custom-viz-plugin.settings :as custom-viz.settings]
-   [metabase-enterprise.custom-viz-plugin.test-util :as cvp.tu]
    [metabase.config.core :as config]
+   [metabase.custom-viz-plugin.cache :as cache]
+   [metabase.custom-viz-plugin.settings :as custom-viz.settings]
+   [metabase.custom-viz-plugin.test-util :as cvp.tu]
    [metabase.test :as mt]
    [metabase.test.fixtures :as fixtures]
    [metabase.test.http-client :as client]
@@ -81,12 +81,11 @@
                                   (cvp.tu/valid-bundle-bytes "auth-test-5")
                                   :method :put)))))))
 
-(deftest feature-flag-test
-  (testing "endpoints require :custom-viz premium feature"
+(deftest no-premium-feature-required-test
+  (testing "endpoints are available in every edition — no premium token required"
     (mt/with-premium-features #{}
-      (mt/assert-has-premium-feature-error
-       "Custom Visualizations"
-       (mt/user-http-request :crowberto :get 402 "ee/custom-viz-plugin/")))))
+      (is (sequential? (mt/user-http-request :crowberto :get 200 "ee/custom-viz-plugin/")))
+      (is (sequential? (mt/user-http-request :rasta :get 200 "ee/custom-viz-plugin/list"))))))
 
 ;;; ------------------------------------------------ /list endpoint ------------------------------------------------
 
@@ -471,11 +470,9 @@
           (is (= "no-referrer" (get headers "Referrer-Policy")))
           (is (= "same-origin" (get headers "Cross-Origin-Resource-Policy")))
           (is (= "public, max-age=60" (get headers "Cache-Control")))))))
-  (testing "GET /sandbox-host requires the :custom-viz premium feature"
+  (testing "GET /sandbox-host does not require a premium token"
     (mt/with-premium-features #{}
-      (mt/assert-has-premium-feature-error
-       "Custom Visualizations"
-       (mt/user-http-request :rasta :get 402 "ee/custom-viz-plugin/sandbox-host"))))
+      (is (mt/user-http-request :rasta :get 200 "ee/custom-viz-plugin/sandbox-host"))))
   (testing "GET /sandbox-host requires authentication"
     (mt/with-premium-features #{:custom-viz}
       (is (= "Unauthenticated"

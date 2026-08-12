@@ -7,6 +7,11 @@ import {
   SettingsPageWrapper,
   SettingsSection,
 } from "metabase/admin/components/SettingsSection";
+import {
+  useCreateCustomVizPluginMutation,
+  useListAllCustomVizPluginsQuery,
+  useReplaceCustomVizPluginBundleMutation,
+} from "metabase/api";
 import { ExternalLink } from "metabase/common/components/ExternalLink";
 import { useDocsUrl } from "metabase/common/hooks";
 import {
@@ -28,11 +33,6 @@ import {
 } from "metabase/ui";
 import * as Urls from "metabase/urls";
 import * as Errors from "metabase/utils/errors";
-import {
-  useCreateCustomVizPluginMutation,
-  useListAllCustomVizPluginsQuery,
-  useReplaceCustomVizPluginBundleMutation,
-} from "metabase-enterprise/api";
 
 import {
   trackCustomVizPluginCreated,

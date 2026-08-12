@@ -688,6 +688,20 @@
    :api  #{}
    :uses :any}
 
+  custom-viz-plugin
+  {:team "Gadget"
+   :api  #{metabase.custom-viz-plugin.api
+           metabase.custom-viz-plugin.init
+           metabase.custom-viz-plugin.settings}
+   :uses #{api
+           config
+           events
+           models
+           server
+           settings
+           util}
+   :model-exports #{:model/CustomVizPlugin}}
+
   dashboards
   {:team "UX West"
    :api  #{metabase.dashboards.autoplace
@@ -1602,6 +1616,7 @@
            app-db
            classloader
            config
+           custom-viz-plugin
            events
            internal-stats
            llm
@@ -2031,6 +2046,7 @@
            app-db
            appearance
            config
+           custom-viz-plugin
            driver
            embedding
            initialization-status
@@ -2047,7 +2063,6 @@
            tracing
            users
            util
-           enterprise/custom-viz-plugin
            enterprise/sso}
    :model-imports #{:model/Session}}
 
@@ -2994,21 +3009,6 @@
   {:team "DevEx"
    :api  #{metabase-enterprise.core.init}
    :uses :any}
-
-  enterprise/custom-viz-plugin
-  {:team "Gadget"
-   :api  #{metabase-enterprise.custom-viz-plugin.api
-           metabase-enterprise.custom-viz-plugin.init
-           metabase-enterprise.custom-viz-plugin.settings}
-   :uses #{api
-           config
-           events
-           models
-           premium-features
-           server
-           settings
-           util}
-   :model-exports #{:model/CustomVizPlugin}}
 
   enterprise/dashboard-subscription-filters
   {:team "Graphy"

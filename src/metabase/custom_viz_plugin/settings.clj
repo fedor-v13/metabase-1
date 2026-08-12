@@ -1,6 +1,5 @@
-(ns metabase-enterprise.custom-viz-plugin.settings
+(ns metabase.custom-viz-plugin.settings
   (:require
-   [metabase.premium-features.core :refer [defenterprise]]
    [metabase.server.settings :as server.settings]
    [metabase.settings.core :as setting :refer [defsetting]]
    [metabase.util.i18n :refer [deferred-tru tru]]))
@@ -18,7 +17,6 @@
   (deferred-tru "Should custom visualizations be enabled for this instance?")
   :type       :boolean
   :default    false
-  :feature    :custom-viz
   :visibility :admin
   :export?    true
   :audit      :getter
@@ -31,10 +29,3 @@
                     (throw (ex-info (tru "Turn on the image CSP setting before enabling Custom Visualizations.")
                                     {:status-code 400})))
                   (setting/set-value-of-type! :boolean :custom-viz-enabled new-value))))
-
-(defenterprise enable-custom-viz?
-  "Enterprise implementation: custom visualizations are enabled when the admin has opted in via the
-  `custom-viz-enabled` setting and the instance's token includes the `:custom-viz` premium feature."
-  :feature :custom-viz
-  []
-  (boolean (custom-viz-enabled)))
