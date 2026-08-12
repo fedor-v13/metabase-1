@@ -59,7 +59,11 @@ export const PublicOrEmbeddedDashboardPage = (props: WithRouterProps) => {
       locale={canWhitelabel ? locale : undefined}
       shouldWaitForLocale
     >
-      <EmbeddingEntityContextProvider uuid={uuid} token={token}>
+      <EmbeddingEntityContextProvider
+        uuid={uuid}
+        token={token}
+        entityType="dashboard"
+      >
         <DashboardContextProvider
           dashboardId={dashboardId}
           hideParameters={hide_parameters}

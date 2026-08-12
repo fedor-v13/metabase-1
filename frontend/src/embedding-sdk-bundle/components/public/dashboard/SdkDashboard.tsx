@@ -510,7 +510,11 @@ const SdkDashboardInner = ({
   }
 
   return (
-    <EmbeddingEntityContextProvider uuid={null} token={token}>
+    <EmbeddingEntityContextProvider
+      uuid={null}
+      token={token}
+      entityType="dashboard"
+    >
       <DashboardContextProvider
         ref={dashboardContextProviderRef}
         dashboardId={dashboardId}

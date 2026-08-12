@@ -6,6 +6,7 @@ import type { Dispatch } from "metabase/redux/store";
 import type {
   CustomVizPluginId,
   CustomVizPluginRuntime,
+  ListEmbeddedCustomVizPluginsRequest,
   VisualizationDisplay,
 } from "metabase-types/api";
 import { isCustomVizDisplay } from "metabase-types/guards";
@@ -39,10 +40,14 @@ const getDefaultPluginCustomViz = () => ({
    * Load (and register) the plugin backing a `custom:*` display, if it is
    * installed and enabled. Resolves to the registered display identifier, or
    * null when the plugin is unavailable. No-op in OSS.
+   *
+   * `embedRequest` names the shared entity when there is no session to list
+   * plugins with (guest embeds), so the lookup can use the entity-scoped route.
    */
   loadCustomVizPluginForDisplay: async (
     _dispatch: Dispatch,
     _display: string,
+    _embedRequest?: ListEmbeddedCustomVizPluginsRequest,
   ): Promise<VisualizationDisplay | null> => null,
   getPluginAssetUrl: (
     _pluginId: CustomVizPluginId,

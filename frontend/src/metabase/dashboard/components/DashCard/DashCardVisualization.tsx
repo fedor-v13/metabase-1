@@ -18,7 +18,10 @@ import {
   getVirtualCardType,
   isDashcardAccessRestricted,
 } from "metabase/dashboard/utils";
-import { EmbeddingEntityContextProvider } from "metabase/embedding/context";
+import {
+  EmbeddingEntityContextProvider,
+  useEmbeddingEntityContext,
+} from "metabase/embedding/context";
 import { PLUGIN_CONTENT_TRANSLATION } from "metabase/plugins";
 import { useDispatch, useSelector } from "metabase/redux";
 import { getSetting } from "metabase/selectors/settings";
@@ -375,8 +378,19 @@ export function DashCardVisualization({
     series,
   ]);
 
-  const token = useMemo(() => getDashcardTokenId(dashcard), [dashcard]);
-  const uuid = useMemo(() => getDashcardUuid(dashcard), [dashcard]);
+  // In public and static embeds the dashcard's `dashboard_id` is rewritten to the
+  // uuid/token it was fetched with. Guest embeds address the dashboard by its real
+  // id and keep the token on the surrounding context, so inherit it there rather
+  // than shadowing it with nothing.
+  const enclosingEmbeddingContext = useEmbeddingEntityContext();
+  const token = useMemo(
+    () => getDashcardTokenId(dashcard) ?? enclosingEmbeddingContext.token,
+    [dashcard, enclosingEmbeddingContext.token],
+  );
+  const uuid = useMemo(
+    () => getDashcardUuid(dashcard) ?? enclosingEmbeddingContext.uuid,
+    [dashcard, enclosingEmbeddingContext.uuid],
+  );
 
   const findCardById = useCallback(
     (cardId?: CardId | null) => {
@@ -529,7 +543,11 @@ export function DashCardVisualization({
       })}
       ref={containerRef}
     >
-      <EmbeddingEntityContextProvider uuid={uuid ?? null} token={token ?? null}>
+      <EmbeddingEntityContextProvider
+        uuid={uuid ?? null}
+        token={token ?? null}
+        entityType="dashboard"
+      >
         <Visualization
           className={cx(S.Visualization, CS.flexFull, {
             [CS.overflowAuto]: visualizationOverlay,

@@ -134,8 +134,11 @@ export const PublicDocument = ({ location, params }: PublicDocumentProps) => {
     [document?.cards, uuid],
   );
 
+  // `entityType` is null: public documents have no entity-scoped custom-viz
+  // routes of their own, so `custom:*` cards inside one still fall back to the
+  // default visualization.
   return (
-    <EmbeddingEntityContextProvider uuid={uuid} token={null}>
+    <EmbeddingEntityContextProvider uuid={uuid} token={null} entityType={null}>
       <EmbedFrame
         theme={theme}
         titled={false}

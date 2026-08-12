@@ -79,6 +79,11 @@ export async function runQuestionQuerySdk(
               PLUGIN_CUSTOM_VIZ.loadCustomVizPluginForDisplay(
                 dispatch,
                 customDisplay,
+                // A guest embed has no session, so the plugin has to be looked
+                // up through the card's own signed-token route.
+                isGuestEmbed && token
+                  ? { entityType: "card", uuid: null, token }
+                  : undefined,
               ),
             ),
           )

@@ -17,6 +17,7 @@
   (:require
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
+   [metabase.custom-viz-plugin.embed-api :as custom-viz.embed]
    [metabase.eid-translation.core :as eid-translation]
    [metabase.embedding-rest.api.common :as api.embed.common]
    [metabase.embedding.jwt :as embedding.jwt]
@@ -439,3 +440,54 @@
     (api.embed.common/check-embedding-enabled-for-dashboard dashboard)
     (request/as-admin
       (api.embed.common/process-tiles-query-for-dashcard dashboard dashcard card parameters zoom x y lat-field lon-field))))
+
+;;; ------------------------------------ /api/embed custom visualization endpoints -----------------------------------
+
+;; An embedded card or dashboard may render a `custom:*` display, whose code lives in an uploaded
+;; plugin bundle. The authenticated plugin endpoints are useless to an anonymous embed viewer, so
+;; these token-scoped mirrors serve only the plugins *this* entity actually uses — nothing else is
+;; listed, and no other plugin id resolves under this token.
+
+(defn- embedded-card-custom-viz-displays [token]
+  (let [unsigned (unsign-and-translate-ids token)
+        card-id  (api.embed.common/unsigned-token->card-id unsigned)]
+    (api.embed.common/check-embedding-enabled-for-card
+     (api/check-404 (t2/select-one [:model/Card :enable_embedding :archived] :id card-id)))
+    (custom-viz.embed/card-displays [card-id])))
+
+(defn- embedded-dashboard-custom-viz-displays [token]
+  (let [unsigned     (unsign-and-translate-ids token)
+        dashboard-id (api.embed.common/unsigned-token->dashboard-id unsigned)]
+    (api.embed.common/check-embedding-enabled-for-dashboard
+     (api/check-404 (t2/select-one [:model/Dashboard :enable_embedding :archived] :id dashboard-id)))
+    (custom-viz.embed/dashboard-displays dashboard-id)))
+
+(api.macros/defendpoint :get "/card/:token/custom-viz-plugin/list" :- [:sequential custom-viz.embed/RuntimeResponse]
+  "List the custom visualization plugins used by the Card identified by a signed `token`."
+  [{:keys [token]} :- [:map
+                       [:token api.embed.common/EncodedToken]]]
+  (custom-viz.embed/plugins-for-displays (embedded-card-custom-viz-displays token)
+                                         (format "/api/embed/card/%s/custom-viz-plugin" token)))
+
+(api.macros/defendpoint :get "/card/:token/custom-viz-plugin/:plugin-id/bundle" :- :any
+  "Serve the JS bundle for a custom visualization used by the Card identified by a signed `token`.
+  404s for any plugin the Card doesn't use."
+  [{:keys [token plugin-id]} :- [:map
+                                 [:token     api.embed.common/EncodedToken]
+                                 [:plugin-id ms/PositiveInt]]]
+  (custom-viz.embed/bundle-response plugin-id (embedded-card-custom-viz-displays token)))
+
+(api.macros/defendpoint :get "/dashboard/:token/custom-viz-plugin/list" :- [:sequential custom-viz.embed/RuntimeResponse]
+  "List the custom visualization plugins used by the Dashboard identified by a signed `token`."
+  [{:keys [token]} :- [:map
+                       [:token api.embed.common/EncodedToken]]]
+  (custom-viz.embed/plugins-for-displays (embedded-dashboard-custom-viz-displays token)
+                                         (format "/api/embed/dashboard/%s/custom-viz-plugin" token)))
+
+(api.macros/defendpoint :get "/dashboard/:token/custom-viz-plugin/:plugin-id/bundle" :- :any
+  "Serve the JS bundle for a custom visualization used by the Dashboard identified by a signed `token`.
+  404s for any plugin the Dashboard doesn't use."
+  [{:keys [token plugin-id]} :- [:map
+                                 [:token     api.embed.common/EncodedToken]
+                                 [:plugin-id ms/PositiveInt]]]
+  (custom-viz.embed/bundle-response plugin-id (embedded-dashboard-custom-viz-displays token)))
