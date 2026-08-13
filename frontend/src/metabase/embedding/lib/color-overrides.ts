@@ -1,3 +1,6 @@
+import Color from "color";
+
+import { getSafeColor } from "metabase/ui/colors/safe-color";
 import { parseHashOptions } from "metabase/utils/browser";
 import type { ColorSettings } from "metabase-types/api";
 
@@ -5,6 +8,9 @@ import type { ColorSettings } from "metabase-types/api";
  * Colors that URL hash parameters may override in static and public embeds, e.g.
  *
  *   /embed/dashboard/TOKEN#primary-color=%23FF5733&card-bg-color=%23FAFAFA
+ *
+ * Values may be hex (3, 6 or 8 digits) or a functional notation carrying an alpha
+ * channel, e.g. `background-color=rgba(255%2C0%2C0%2C0.5)`.
  *
  * Each parameter is accepted in both its hyphenated and underscored spelling.
  *
@@ -36,6 +42,14 @@ const CARD_BG_PARAM = "card-bg-color";
 const HEX_COLOR_REGEX = /^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 /**
+ * Guards the `color` parser so that only functional color notations reach it,
+ * rather than any string it happens to accept. Note that `color` understands the
+ * legacy comma syntax — `rgba(255, 0, 0, 0.5)` — but not the modern
+ * space-separated one, `rgb(255 0 0 / 50%)`.
+ */
+const FUNCTIONAL_COLOR_REGEX = /^(rgb|rgba|hsl|hsla)\(/i;
+
+/**
  * The old fork treated pure black as a request for a transparent background, so
  * that embeds could be dropped onto any page. Kept for backward compatibility.
  */
@@ -51,9 +65,22 @@ export type EmbedColorOverrides = {
 };
 
 /**
+ * Normalizes a functional color notation to `rgba(r, g, b, a)`, which both CSS
+ * and the downstream `Color` operations handle. Returns `null` when the value
+ * cannot be parsed, so a malformed color is ignored rather than raising.
+ */
+function readFunctionalColor(rawColor: string): string | null {
+  try {
+    return getSafeColor(Color(rawColor).rgb().string());
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * Reads a color from a hash option, returning `null` when it is missing or is
- * not a hex color. `parseHashOptions` coerces all-digit values to numbers, so
- * values are stringified before being validated.
+ * not a color we accept. `parseHashOptions` coerces all-digit values to numbers,
+ * so values are stringified before being validated.
  */
 function readColor(value: unknown): string | null {
   if (value == null || typeof value === "boolean" || Array.isArray(value)) {
@@ -61,6 +88,11 @@ function readColor(value: unknown): string | null {
   }
 
   const rawColor = String(value);
+
+  if (FUNCTIONAL_COLOR_REGEX.test(rawColor)) {
+    return readFunctionalColor(rawColor);
+  }
+
   if (!HEX_COLOR_REGEX.test(rawColor)) {
     return null;
   }
