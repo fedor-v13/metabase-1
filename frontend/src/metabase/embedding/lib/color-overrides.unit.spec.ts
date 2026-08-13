@@ -84,9 +84,27 @@ describe("parseEmbedColorOverrides", () => {
     });
   });
 
+  it("accepts rgb, rgba and hsl colors, preserving the alpha channel", () => {
+    expect(
+      parseEmbedColorOverrides("#background-color=rgba(255,0,0,0.5)")?.colors,
+    ).toEqual({
+      "background_page-primary": "rgba(255, 0, 0, 0.5)",
+      "background-primary": "rgba(255, 0, 0, 0.5)",
+    });
+    expect(
+      parseEmbedColorOverrides("#primary-color=rgb(1,2,3)")?.colors,
+    ).toEqual({ brand: "rgb(1, 2, 3)" });
+    // percent signs must be encoded, as the hash is percent-decoded first
+    expect(
+      parseEmbedColorOverrides("#card-bg-color=hsla(0,100%25,50%25,0.25)"),
+    ).toEqual({ colors: {}, cardBackgroundColor: "rgba(255, 0, 0, 0.25)" });
+  });
+
   it("ignores invalid colors instead of throwing", () => {
     expect(parseEmbedColorOverrides("#primary-color=notacolor")).toBeNull();
-    expect(parseEmbedColorOverrides("#primary-color=rgb(1,2,3)")).toBeNull();
+    expect(
+      parseEmbedColorOverrides("#primary-color=rgba(not,a,color)"),
+    ).toBeNull();
     expect(parseEmbedColorOverrides("#primary-color=%23FF57")).toBeNull();
     expect(parseEmbedColorOverrides("#primary-color")).toBeNull();
 

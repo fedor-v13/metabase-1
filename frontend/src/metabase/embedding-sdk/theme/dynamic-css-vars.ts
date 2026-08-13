@@ -10,8 +10,22 @@ import type { ColorOperation } from "../types/private/css-variables";
 import { DYNAMIC_CSS_VARIABLES } from "./dynamic-css-vars-config";
 import { SDK_TO_MAIN_APP_COLORS_MAPPING } from "./embedding-color-palette";
 
+/**
+ * A background this translucent carries no usable lightness signal, so it should
+ * not decide whether the theme is dark.
+ */
+const OPAQUE_ENOUGH_ALPHA = 0.5;
+
 const isColorDefined = (color?: string): color is string =>
   !!color && color !== "transparent" && color !== "unset";
+
+const isOpaqueEnough = (color: string): boolean => {
+  try {
+    return Color(color).alpha() >= OPAQUE_ENOUGH_ALPHA;
+  } catch (e) {
+    return true;
+  }
+};
 
 /**
  * Applies color operations (lighten, darken, alpha) to a base color.
@@ -31,7 +45,11 @@ export function applyColorOperation(
   }
 
   if (operation.alpha !== undefined) {
-    mappedColor = Color(mappedColor).alpha(operation.alpha).rgb().string();
+    // Compose with the source alpha rather than replacing it, so that a
+    // translucent palette color stays translucent. Opaque sources are
+    // unaffected, since their alpha is 1.
+    const alpha = Color(mappedColor).alpha() * operation.alpha;
+    mappedColor = Color(mappedColor).alpha(alpha).rgb().string();
   }
 
   return mappedColor;
@@ -45,7 +63,7 @@ export function getIsDarkThemeFromPalette(theme: MantineThemeOverride) {
   const foregroundColor = theme.fn?.themeColor?.("text-primary");
 
   // Dark background color indicates a dark theme.
-  if (isColorDefined(backgroundColor)) {
+  if (isColorDefined(backgroundColor) && isOpaqueEnough(backgroundColor)) {
     return isDark(backgroundColor);
   }
 
