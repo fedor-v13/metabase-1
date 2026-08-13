@@ -29,6 +29,11 @@ export const leafBlock = {
   percentGap: 8,
 } as const;
 
+// ECharts' treemap `animationDurationUpdate` default is 900ms. The tooltip gate is released by the
+// chart's one-shot `finished` event; this bound guarantees it is released even if that event is
+// missed (e.g. the handler is detached during a re-render), so tooltips can never latch off.
+export const TREEMAP_ANIMATION_GATE_TIMEOUT = 1500;
+
 export const GROUP_HEADER_BG_TINT = 0.4;
 
 export function getGroupHeaderBgTint(
