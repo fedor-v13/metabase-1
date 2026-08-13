@@ -1,6 +1,6 @@
 import type { EChartsType } from "echarts/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLatest } from "react-use";
+import { useLatest, useUnmount } from "react-use";
 
 import { Box, Stack } from "metabase/ui";
 import { extractRemappings } from "metabase/visualizations";
@@ -17,6 +17,7 @@ import { getTreemapInlineValueIds } from "metabase/visualizations/echarts/graph/
 import { isOverview } from "metabase/visualizations/echarts/graph/treemap/model/tree";
 import { getTreemapChartOption } from "metabase/visualizations/echarts/graph/treemap/option/option";
 import {
+  TREEMAP_ANIMATION_GATE_TIMEOUT,
   getChartPadding,
   groupHeader,
 } from "metabase/visualizations/echarts/graph/treemap/style";
@@ -56,7 +57,15 @@ export const TreemapChart = ({
   const chartRef = useRef<EChartsType>();
   const overlayRef = useRef<TreemapHoverOverlay | null>(null);
   const isAnimatingRef = useRef(false);
+  const animationGateTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const clickedRef = useLatest(clicked);
+
+  const releaseAnimationGate = useCallback(() => {
+    clearTimeout(animationGateTimerRef.current);
+    isAnimatingRef.current = false;
+  }, []);
+
+  useUnmount(() => clearTimeout(animationGateTimerRef.current));
 
   const { zrEventHandlers, getPointer } = usePointerTracking();
 
@@ -197,9 +206,9 @@ export const TreemapChart = ({
   });
 
   const handleFinished = useCallback(() => {
-    isAnimatingRef.current = false;
+    releaseAnimationGate();
     handleLabelMeasure();
-  }, [handleLabelMeasure]);
+  }, [handleLabelMeasure, releaseAnimationGate]);
 
   const allEventHandlers = useMemo(
     () => [
@@ -221,10 +230,21 @@ export const TreemapChart = ({
     prevViewRootIdRef.current = viewRootId;
     if (isDrillTransition) {
       isAnimatingRef.current = true;
+      clearTimeout(animationGateTimerRef.current);
+      animationGateTimerRef.current = setTimeout(
+        releaseAnimationGate,
+        TREEMAP_ANIMATION_GATE_TIMEOUT,
+      );
     } else {
       handleLabelMeasure();
     }
-  }, [chartInstance, option, viewRootId, handleLabelMeasure]);
+  }, [
+    chartInstance,
+    option,
+    viewRootId,
+    handleLabelMeasure,
+    releaseAnimationGate,
+  ]);
 
   const breadcrumb = chartData
     ? getTreemapBreadcrumbModel(chartData.tree, viewRootId)
