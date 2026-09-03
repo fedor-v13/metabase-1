@@ -28,6 +28,7 @@
    [metabase.query-processor.pivot.common :as pivot.common]
    [metabase.query-processor.reducible :as qp.reducible]
    [metabase.query-processor.schema :as qp.schema]
+   [metabase.query-processor.settings :as qp.settings]
    [metabase.query-processor.setup :as qp.setup]
    [metabase.util :as u]
    [metabase.util.i18n :refer [tru]]
@@ -481,19 +482,17 @@
            :qp.pivot/num-remapped-breakouts   num-remapped-breakouts
            :qp.pivot/remapped-indexes         remap)))
 
-(def ^:dynamic ^:private *pivot-max-result-rows*
-  "Maximum number of result rows for each pivot sub-query. Divided by the number of aggregations since each aggregation
-  adds a column to the output, so fewer rows are needed to fill the pivot table."
-  200000)
-
 (defn- pivot-query-max-rows
-  "Calculate the per-sub-query row limit for pivot queries: `floor(pivot-max-result-rows / num-aggregations)`.
-  Falls back to `pivot-max-result-rows` if there are no aggregations (shouldn't happen for pivot queries)."
+  "Calculate the per-sub-query row limit for pivot queries, i.e. [[qp.settings/pivot-max-result-rows]] divided by the
+  number of aggregations, rounded down. We divide because each aggregation adds a column to the output, so fewer rows
+  are needed to fill the pivot table. Falls back to the undivided setting value if there are no aggregations (shouldn't
+  happen for pivot queries)."
   [query]
-  (let [num-aggs (count (lib/aggregations query))]
+  (let [max-rows (qp.settings/pivot-max-result-rows)
+        num-aggs (count (lib/aggregations query))]
     (if (pos? num-aggs)
-      (quot *pivot-max-result-rows* num-aggs)
-      *pivot-max-result-rows*)))
+      (quot max-rows num-aggs)
+      max-rows)))
 
 (mu/defn run-pivot-query
   "Run the pivot query. You are expected to wrap this call in [[metabase.query-processor.streaming/streaming-response]]

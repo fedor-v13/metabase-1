@@ -882,13 +882,13 @@
               (str "Detail count sum (" detail-count-sum ") should equal grand total ("
                    grand-total-count ") because pivot uses its own higher limit")))))))
 
-(deftest ^:parallel pivot-query-short-circuits-when-master-hits-limit-test
+(deftest pivot-query-short-circuits-when-master-hits-limit-test
   (testing "When the master pivot query hits the row limit, remaining sub-queries are skipped and truncation is signaled"
     (mt/test-drivers (qp.pivot.test-util/applicable-drivers)
       ;; Use the standard pivot-query but override the pivot limit to be very small.
       ;; The master query (state × source × category) produces ~200+ rows.
-      ;; With *pivot-max-result-rows* 20, the limit is 20/2=10 per sub-query.
-      (binding [qp.pivot/*pivot-max-result-rows* 20]
+      ;; With pivot-max-result-rows 20, the limit is 20/2=10 per sub-query.
+      (mt/with-temporary-setting-values [qp.settings/pivot-max-result-rows 20]
         (let [query   (qp.pivot.test-util/pivot-query)
               results (qp.pivot/run-pivot-query query)
               rows    (mt/rows results)]
@@ -907,12 +907,12 @@
       ;; Setting unaggregated-query-row-limit to 15 means max-results-bare-rows (15) > max-results (10),
       ;; which violates the constraint schema without the fix.
       ;; Pre-set :constraints like the API layer does (see qp.api/run-query-async+pivot).
-      (binding [qp.pivot/*pivot-max-result-rows* 20]
-        (mt/with-temporary-setting-values [qp.settings/unaggregated-query-row-limit 15]
-          (let [query   (-> (qp.pivot.test-util/pivot-query)
-                            (assoc :constraints (qp.constraints/default-query-constraints)))
-                results (qp.pivot/run-pivot-query query)]
-            (is (<= 2 (count (get-in query [:query :aggregation])))
-                "Sanity check: pivot-query should have at least 2 aggregations")
-            (is (not= :failed (:status results))
-                "Pivot query should not fail with a constraint violation")))))))
+      (mt/with-temporary-setting-values [qp.settings/pivot-max-result-rows        20
+                                         qp.settings/unaggregated-query-row-limit 15]
+        (let [query   (-> (qp.pivot.test-util/pivot-query)
+                          (assoc :constraints (qp.constraints/default-query-constraints)))
+              results (qp.pivot/run-pivot-query query)]
+          (is (<= 2 (count (get-in query [:query :aggregation])))
+              "Sanity check: pivot-query should have at least 2 aggregations")
+          (is (not= :failed (:status results))
+              "Pivot query should not fail with a constraint violation"))))))

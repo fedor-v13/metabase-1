@@ -4,10 +4,10 @@ import { forwardRef, useCallback, useMemo } from "react";
 import { t } from "ttag";
 
 import { useNumberFormatter } from "metabase/common/hooks/use-number-formatter";
+import { useHardRowLimit } from "metabase/common/hooks/use-row-limit";
 import CS from "metabase/css/core/index.css";
 import DashboardS from "metabase/css/dashboard.module.css";
 import { Icon } from "metabase/ui";
-import { HARD_ROW_LIMIT } from "metabase-lib/v1/queries/utils";
 
 import {
   PaginationButton,
@@ -45,8 +45,9 @@ export const PaginationFooter = forwardRef<
   ref,
 ) {
   const formatNumber = useNumberFormatter();
+  const hardRowLimit = useHardRowLimit();
   const paginateMessage = useMemo(() => {
-    const isOverLimit = limit === undefined && total >= HARD_ROW_LIMIT;
+    const isOverLimit = limit === undefined && total >= hardRowLimit;
 
     if (singleItem) {
       return isOverLimit
@@ -57,7 +58,7 @@ export const PaginationFooter = forwardRef<
     return isOverLimit
       ? t`Rows ${start + 1}-${end + 1} of first ${formatNumber(total)}`
       : t`Rows ${start + 1}-${end + 1} of ${formatNumber(total)}`;
-  }, [total, start, end, limit, singleItem, formatNumber]);
+  }, [total, start, end, limit, singleItem, formatNumber, hardRowLimit]);
 
   const handlePreviousPage = useCallback(
     (event: MouseEvent) => {

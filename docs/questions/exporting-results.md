@@ -63,8 +63,10 @@ The reason Metabase doesn't try to export results as a native Excel PivotTable i
 
 By default, Metabase will export first 1048575 rows of results.
 
-- For CSV exports, you can increase this limit with an environment variable: [`MB_DOWNLOAD_ROW_LIMIT`](../configuring-metabase/environment-variables.md#mb_download_row_limit). Increasing this limit, however, may impact your Metabase's performance.
-- XLSX exports will always be limited to Excel's maximum of 1048575 rows (plus the header row).
+- For CSV and JSON exports, you can increase this limit with an environment variable: [`MB_DOWNLOAD_ROW_LIMIT`](../configuring-metabase/environment-variables.md#mb_download_row_limit). Increasing this limit, however, may impact your Metabase's performance. Note that `MB_DOWNLOAD_ROW_LIMIT` can only raise the limit — setting it below 1048575 has no effect.
+- XLSX exports will always be limited to Excel's maximum of 1048575 rows (plus the header row), whatever you set `MB_DOWNLOAD_ROW_LIMIT` to. This is a limit of the Excel file format, not of Metabase.
+
+If you're exporting millions of rows, you may also need to raise [`MB_JETTY_ASYNC_RESPONSE_TIMEOUT`](../configuring-metabase/environment-variables.md#mb_jetty_async_response_timeout) (10 minutes by default), since a large export can take longer than that to stream.
 
 ### Cell character limit in Excel exports
 

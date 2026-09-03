@@ -136,6 +136,7 @@ no-object-illustration
 no-object-illustration-custom
 non-table-chart-generated
 persisted-models-enabled
+pivot-max-result-rows
 report-timezone
 report-timezone-long
 report-timezone-short

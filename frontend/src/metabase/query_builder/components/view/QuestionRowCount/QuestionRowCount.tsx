@@ -8,6 +8,7 @@ import {
   type NumberFormatter,
   useNumberFormatter,
 } from "metabase/common/hooks/use-number-formatter";
+import { useHardRowLimit } from "metabase/common/hooks/use-row-limit";
 import { formatRowCount } from "metabase/common/utils/format-row-count";
 import { getRowCountMessage } from "metabase/common/utils/get-row-count-message";
 import CS from "metabase/css/core/index.css";
@@ -24,7 +25,6 @@ import { Box, Popover, UnstyledButton } from "metabase/ui";
 import type { Limit } from "metabase-lib";
 import * as Lib from "metabase-lib";
 import type Question from "metabase-lib/v1/Question";
-import { HARD_ROW_LIMIT } from "metabase-lib/v1/queries/utils";
 import type { Dataset } from "metabase-types/api";
 
 import QuestionRowCountS from "./QuestionRowCount.module.css";
@@ -76,17 +76,20 @@ function QuestionRowCountInner({
   );
   const { isEditable, isNative } = Lib.queryDisplayInfo(question.query());
   const formatNumber = useNumberFormatter();
+  const hardRowLimit = useHardRowLimit();
   const message = useMemo(() => {
     if (result == null) {
       return "";
     }
     if (isNative) {
-      return isResultDirty ? "" : getRowCountMessage(result, formatNumber);
+      return isResultDirty
+        ? ""
+        : getRowCountMessage(result, formatNumber, hardRowLimit);
     }
     return isResultDirty
-      ? getLimitMessage(question, result, formatNumber)
-      : getRowCountMessage(result, formatNumber);
-  }, [question, result, isResultDirty, isNative, formatNumber]);
+      ? getLimitMessage(question, result, formatNumber, hardRowLimit)
+      : getRowCountMessage(result, formatNumber, hardRowLimit);
+  }, [question, result, isResultDirty, isNative, formatNumber, hardRowLimit]);
 
   const handleLimitChange = (limit: number | null) => {
     onChangeLimit(limit !== null && limit > 0 ? limit : null);
@@ -174,10 +177,11 @@ function getLimitMessage(
   question: Question,
   result: Dataset,
   formatNumber: NumberFormatter,
+  hardRowLimit: number,
 ): string {
   const limit = Lib.currentLimit(question.query(), -1);
   const isValidLimit =
-    typeof limit === "number" && limit > 0 && limit < HARD_ROW_LIMIT;
+    typeof limit === "number" && limit > 0 && limit < hardRowLimit;
 
   if (isValidLimit) {
     return t`Show ${formatRowCount(limit, formatNumber)}`;
@@ -188,11 +192,11 @@ function getLimitMessage(
 
   if (hasValidRowCount) {
     // The query has been altered but we might still have the old result set,
-    // so show that instead of a generic HARD_ROW_LIMIT
+    // so show that instead of a generic row limit
     return t`Showing ${formatRowCount(result.row_count, formatNumber)}`;
   }
 
-  return t`Showing first ${formatRowCount(HARD_ROW_LIMIT, formatNumber)} rows`;
+  return t`Showing first ${formatRowCount(hardRowLimit, formatNumber)} rows`;
 }
 
 const ConnectedQuestionRowCount = connect(

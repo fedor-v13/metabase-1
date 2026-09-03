@@ -69,7 +69,7 @@ The email address users should be referred to if they encounter a problem.
 
 Maximum number of rows to return for aggregated queries via the API.
 
-Must be less than 1048575. See also MB_UNAGGREGATED_QUERY_ROW_LIMIT.
+Must be less than 1048575. This also acts as a ceiling on MB_UNAGGREGATED_QUERY_ROW_LIMIT, so raise it alongside that setting when increasing the number of rows shown for raw-rows questions. See also MB_UNAGGREGATED_QUERY_ROW_LIMIT.
 
 ### `MB_AI_FEATURES_ENABLED`
 
@@ -499,6 +499,7 @@ Prevents the server from sending CORS headers for requests originating from loca
 - Type: positive-integer
 - Default: `null`
 - [Exported as](../installation-and-operation/serialization.md): `download-row-limit`.
+- [Configuration file name](./config-file.md): `download-row-limit`
 
 Row limit in file exports excluding the header. Enforces 1048575 excluding header as minimum. xlsx downloads are inherently limited to 1048575 rows even if this limit is higher.
 
@@ -1714,6 +1715,16 @@ cron syntax string to schedule refreshing persisted models.
 
 Allow persisting models into the source database.
 
+### `MB_PIVOT_MAX_RESULT_ROWS`
+
+- Type: positive-integer
+- Default: `200000`
+- [Exported as](../installation-and-operation/serialization.md): `pivot-max-result-rows`.
+
+Maximum number of result rows for each pivot table sub-query.
+
+Divided by the number of aggregations in the pivot table, since each aggregation adds a column to the output. Note that this overrides MB_AGGREGATED_QUERY_ROW_LIMIT for pivot tables, so raising that setting alone will not show more rows in a pivot table.
+
 ### `MB_PREMIUM_EMBEDDING_TOKEN`
 
 - Type: string
@@ -2498,7 +2509,7 @@ Enable transforms for instances that have not explicitly purchased the transform
 
 Maximum number of rows to return specifically on :rows type queries via the API.
 
-Must be less than 1048575, and less than the number configured in MB_AGGREGATED_QUERY_ROW_LIMIT. See also MB_AGGREGATED_QUERY_ROW_LIMIT.
+Must be less than 1048575. This limit is clamped down to MB_AGGREGATED_QUERY_ROW_LIMIT, so to raise the number of rows shown for raw-rows questions you must raise *both* settings — raising this one alone has no effect beyond the aggregated limit. See also MB_AGGREGATED_QUERY_ROW_LIMIT.
 
 ### `MB_UPLOADS_DATABASE_ID [DEPRECATED]`
 

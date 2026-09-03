@@ -10,6 +10,7 @@ import {
 } from "metabase/common/components/BulkActionBar";
 import { GenericError } from "metabase/common/components/ErrorPages";
 import { useCloseNavbarOnMount } from "metabase/common/hooks/use-close-navbar-on-mount";
+import { useHardRowLimit } from "metabase/common/hooks/use-row-limit";
 import { useSelector } from "metabase/redux";
 import { getUserIsAdmin } from "metabase/selectors/user";
 import { Box, Flex, Stack, Text } from "metabase/ui";
@@ -53,6 +54,7 @@ export const EditTableDataContainer = ({
 }: EditTableDataContainerProps) => {
   useCloseNavbarOnMount();
 
+  const hardRowLimit = useHardRowLimit();
   const databaseId = parseInt(dbIdParam, 10);
   const tableId = parseInt(tableIdParam, 10);
 
@@ -217,7 +219,7 @@ export const EditTableDataContainer = ({
       {rawDataset && (
         <Flex className={S.gridFooter}>
           <Text fw="bold" size="md" c="inherit" component="span">
-            {getRowCountMessage(rawDataset)}
+            {getRowCountMessage(rawDataset, hardRowLimit)}
           </Text>
         </Flex>
       )}

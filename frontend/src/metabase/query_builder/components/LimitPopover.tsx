@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { useLatest } from "react-use";
 import { t } from "ttag";
 
+import { useHardRowLimit } from "metabase/common/hooks/use-row-limit";
 import CS from "metabase/css/core/index.css";
 import { LimitInput } from "metabase/querying/components/LimitInput";
 import { Box, Radio, Stack } from "metabase/ui";
 import { formatNumber } from "metabase/utils/formatting";
-import { HARD_ROW_LIMIT } from "metabase-lib/v1/queries/utils";
 
 interface LimitPopoverProps {
   limit: number | null;
@@ -22,9 +22,10 @@ export const LimitPopover = ({
   onClose,
   className,
 }: LimitPopoverProps) => {
+  const hardRowLimit = useHardRowLimit();
   const [isCustom, setIsCustom] = useState(limit != null);
   const [value, setValue] = useState(
-    limit != null ? String(limit) : String(HARD_ROW_LIMIT),
+    limit != null ? String(limit) : String(hardRowLimit),
   );
   const inputRef = useRef<HTMLInputElement>(null);
   // Set when the popover is dismissed with Escape so the pending value is
@@ -74,7 +75,7 @@ export const LimitPopover = ({
         <Stack gap="sm">
           <Radio
             value="maximum"
-            label={t`Show maximum (first ${formatNumber(HARD_ROW_LIMIT)})`}
+            label={t`Show maximum (first ${formatNumber(hardRowLimit)})`}
           />
           <Radio value="custom" label={t`Set custom limit`} />
         </Stack>

@@ -598,6 +598,24 @@ interface PublicSettings {
   "enable-password-login": boolean;
   "enable-pivoted-exports": boolean;
   "enable-sandboxes?": boolean;
+  /**
+   * Max rows returned for raw-rows questions (MB_UNAGGREGATED_QUERY_ROW_LIMIT).
+   * `null` when unset — the backend then falls back to `HARD_ROW_LIMIT`.
+   */
+  "unaggregated-query-row-limit": number | null;
+  /**
+   * Max rows returned for aggregated questions (MB_AGGREGATED_QUERY_ROW_LIMIT).
+   * `null` when unset — the backend then falls back to
+   * `DEFAULT_AGGREGATED_ROW_LIMIT`. Also acts as a ceiling on
+   * `unaggregated-query-row-limit`.
+   */
+  "aggregated-query-row-limit": number | null;
+  /**
+   * Max rows in a file export (MB_DOWNLOAD_ROW_LIMIT). `null` when unset — the
+   * backend then falls back to `ABSOLUTE_MAX_ROW_LIMIT`. Never applies to xlsx,
+   * which is capped at `ABSOLUTE_MAX_ROW_LIMIT` by the Excel file format.
+   */
+  "download-row-limit": number | null;
   engines: Record<EngineKey, Engine>;
   "google-auth-client-id": string | null;
   "google-auth-enabled": boolean;
