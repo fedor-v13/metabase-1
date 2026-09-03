@@ -4,6 +4,8 @@ import { t } from "ttag";
 import { ExportSettingsWidget } from "metabase/common/components/ExportSettingsWidget";
 import { Link } from "metabase/common/components/Link";
 import { useDocsUrl, useUserSetting } from "metabase/common/hooks";
+import { useNumberFormatter } from "metabase/common/hooks/use-number-formatter";
+import { useDownloadRowLimit } from "metabase/common/hooks/use-row-limit";
 import { useUserKeyValue } from "metabase/common/hooks/use-user-key-value";
 import type {
   ExportFormat,
@@ -106,9 +108,11 @@ export const QuestionDownloadWidget = ({
 
   const hasTruncatedResults =
     result.data != null && result.data.rows_truncated != null;
+  const formatNumber = useNumberFormatter();
+  const downloadRowLimit = useDownloadRowLimit(format);
   const limitedDownloadSizeText =
     PLUGIN_FEATURE_LEVEL_PERMISSIONS.getDownloadWidgetMessageOverride(result) ??
-    t`The maximum download size is 1 million rows.`;
+    t`The maximum download size is ${formatNumber(downloadRowLimit)} rows.`;
 
   const [loading, setLoading] = useState(false);
 

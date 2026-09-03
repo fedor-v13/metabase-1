@@ -221,19 +221,19 @@ describe("QuestionDownloadWidget", () => {
 
     // Initially on csv format - should not show the text
     expect(
-      screen.queryByText(/maximum download size is 1 million rows/),
+      screen.queryByText(/maximum download size is/),
     ).not.toBeInTheDocument();
 
     // Switch to xlsx format - should show the text
     await userEvent.click(screen.getByLabelText(".xlsx"));
     expect(
-      screen.getByText(/maximum download size is 1 million rows/),
+      screen.getByText(/maximum download size is/),
     ).toBeInTheDocument();
 
     // Switch back to csv format - should hide the text
     await userEvent.click(screen.getByLabelText(".csv"));
     expect(
-      screen.queryByText(/maximum download size is 1 million rows/),
+      screen.queryByText(/maximum download size is/),
     ).not.toBeInTheDocument();
   });
 });

@@ -28,7 +28,6 @@ export type QueryVisualizationProps = VisualizationPassThroughProps & {
   question: Question;
   result?: QueryVisualizationResult | null;
   rawSeries?: RawSeries | null;
-  maxTableRows?: number;
 
   isRunnable?: boolean;
   isRunning?: boolean;

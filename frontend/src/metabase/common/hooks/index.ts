@@ -21,3 +21,4 @@ export * from "./use-set-collection";
 export * from "./use-set-pinned";
 export * from "./use-snapshot-selector";
 export * from "./use-subscriber";
+export * from "./use-row-limit";

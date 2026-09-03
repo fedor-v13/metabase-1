@@ -14,7 +14,6 @@ import { Box, Flex, Stack, Text, Title } from "metabase/ui";
 import { isMac } from "metabase/utils/browser";
 import { SERVER_ERROR_TYPES } from "metabase/utils/errors";
 import * as Lib from "metabase-lib";
-import { HARD_ROW_LIMIT } from "metabase-lib/v1/queries/utils";
 
 import S from "./QueryVisualization.module.css";
 import { RunButtonWithTooltip } from "./RunButtonWithTooltip";
@@ -35,7 +34,6 @@ export function QueryVisualization(props: QueryVisualizationProps) {
     isNativeEditorOpen,
     isDirtyStateShownForError,
     result,
-    maxTableRows = HARD_ROW_LIMIT,
   } = props;
 
   const canRun = Lib.canRun(question.query(), question.type());
@@ -79,7 +77,6 @@ export function QueryVisualization(props: QueryVisualizationProps) {
         ) : result?.data ? (
           <VisualizationResult
             {...props}
-            maxTableRows={maxTableRows}
             className={S.spread}
             onUpdateWarnings={setWarnings}
           />

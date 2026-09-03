@@ -3,6 +3,7 @@ import cx from "classnames";
 import { msgid, ngettext } from "ttag";
 
 import { useNumberFormatter } from "metabase/common/hooks/use-number-formatter";
+import { useHardRowLimit } from "metabase/common/hooks/use-row-limit";
 import { getRowCountMessage } from "metabase/common/utils/get-row-count-message";
 import { FOOTER_HEIGHT } from "metabase/data-grid/constants";
 import { PaginationFooter } from "metabase/visualizations/components/PaginationFooter/PaginationFooter";
@@ -29,6 +30,7 @@ export const Footer = <TData,>({
   rowsTruncated,
 }: FooterProps<TData>) => {
   const formatNumber = useNumberFormatter();
+  const hardRowLimit = useHardRowLimit();
   const wrapperAttributes = {
     "data-testid": "table-footer",
     className: cx(S.root, className),
@@ -68,6 +70,7 @@ export const Footer = <TData,>({
                   row_count: total,
                 },
                 formatNumber,
+                hardRowLimit,
               )
             : ngettext(
                 msgid`${formatNumber(total)} row`,
