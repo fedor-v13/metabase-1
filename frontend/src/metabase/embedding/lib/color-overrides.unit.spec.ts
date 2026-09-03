@@ -51,17 +51,17 @@ describe("parseEmbedColorOverrides", () => {
     });
   });
 
-  it("treats pure black as transparent", () => {
+  it("treats pure black as an opaque color, not as transparent", () => {
     expect(
       parseEmbedColorOverrides("#background-color=%23000000")?.colors,
     ).toEqual({
-      "background_page-primary": "transparent",
-      "background-primary": "transparent",
+      "background_page-primary": "#000000",
+      "background-primary": "#000000",
     });
 
     expect(parseEmbedColorOverrides("#card-bg-color=%23000")).toEqual({
       colors: {},
-      cardBackgroundColor: "transparent",
+      cardBackgroundColor: "#000",
     });
   });
 

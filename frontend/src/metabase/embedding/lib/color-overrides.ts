@@ -49,12 +49,6 @@ const HEX_COLOR_REGEX = /^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
  */
 const FUNCTIONAL_COLOR_REGEX = /^(rgb|rgba|hsl|hsla)\(/i;
 
-/**
- * The old fork treated pure black as a request for a transparent background, so
- * that embeds could be dropped onto any page. Kept for backward compatibility.
- */
-const TRANSPARENT_ALIASES = ["#000", "#000000"];
-
 export type EmbedColorOverrides = {
   /** Palette colors, to be merged into whitelabel color settings. */
   colors: ColorSettings;
@@ -97,11 +91,7 @@ function readColor(value: unknown): string | null {
     return null;
   }
 
-  const color = rawColor.startsWith("#") ? rawColor : `#${rawColor}`;
-
-  return TRANSPARENT_ALIASES.includes(color.toLowerCase())
-    ? "transparent"
-    : color;
+  return rawColor.startsWith("#") ? rawColor : `#${rawColor}`;
 }
 
 /** Looks a parameter up in both its hyphenated and underscored spelling. */
