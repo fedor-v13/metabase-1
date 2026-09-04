@@ -4,8 +4,15 @@ import { css } from "@emotion/react";
 import styled from "@emotion/styled";
 
 import type { MantineTheme } from "metabase/ui";
-import { adjustBrightness, alpha, color } from "metabase/ui/colors";
+import { adjustBrightness } from "metabase/ui/colors";
 
+import type { PivotTableCellProps } from "./cell-colors";
+import {
+  getCellBackgroundColor,
+  getCellHoverBackground,
+  getCellTextColor,
+  resolveThemeColor,
+} from "./cell-colors";
 import { CELL_HEIGHT, RESIZE_HANDLE_WIDTH } from "./constants";
 
 export const RowToggleIconRoot = styled.div`
@@ -22,78 +29,18 @@ export const RowToggleIconRoot = styled.div`
 
 function getRowToggleStyle({ theme }: { theme: MantineTheme }) {
   const { textColor, backgroundColor } = theme.other.pivotTable.rowToggle;
-  const hoverColor = adjustBrightness(backgroundColor, 0.2, 0.2);
+  const resolvedBackgroundColor = resolveThemeColor(theme, backgroundColor);
+  const hoverColor = adjustBrightness(resolvedBackgroundColor, 0.2, 0.2);
 
   return css`
-    color: ${color(textColor)};
-    background-color: ${color(backgroundColor)};
+    color: ${resolveThemeColor(theme, textColor)};
+    background-color: ${resolvedBackgroundColor};
 
     &:hover {
-      background-color: ${color(hoverColor)};
+      background-color: ${hoverColor};
     }
   `;
 }
-
-interface PivotTableCellProps {
-  isBold?: boolean;
-  isEmphasized?: boolean;
-  isBorderedHeader?: boolean;
-  hasTopBorder?: boolean;
-  isTransparent?: boolean;
-}
-
-const getCellBackgroundColor = ({
-  theme,
-  isEmphasized,
-  isTransparent,
-}: Partial<PivotTableCellProps> & { theme: MantineTheme }) => {
-  const backgroundColor = theme.other.table.cell.backgroundColor;
-  const isDarkMode = theme.other.colorScheme === "dark";
-
-  if (isTransparent) {
-    return "transparent";
-  }
-
-  if (isEmphasized) {
-    if (isDarkMode) {
-      return color("background_page-primary-inverse");
-    }
-
-    if (backgroundColor) {
-      return adjustBrightness(backgroundColor, 0.15, 0.05);
-    }
-
-    return alpha("border-neutral", 0.25);
-  }
-
-  if (isDarkMode) {
-    return alpha("background_page-primary-inverse", 0.1);
-  }
-
-  return color(backgroundColor ?? "background_page-primary");
-};
-
-const getCellHoverBackground = (
-  props: PivotTableCellProps & { theme: MantineTheme },
-) => {
-  const { cell: cellTheme } = props.theme.other.table;
-
-  if (!cellTheme.backgroundColor) {
-    return "var(--mb-color-border-neutral)";
-  }
-
-  const backgroundColor = getCellBackgroundColor(props);
-
-  return adjustBrightness(backgroundColor, 0.15, 0.1);
-};
-
-const getColor = ({ theme }: PivotTableCellProps & { theme: MantineTheme }) => {
-  if (theme.other.colorScheme === "dark") {
-    return color("text-primary-inverse");
-  }
-
-  return color(theme.other.table.cell.textColor);
-};
 
 const borderRight = css`
   &:after {
@@ -102,7 +49,7 @@ const borderRight = css`
     top: 0;
     right: 0;
     height: 100%;
-    border-right: 1px solid ${color("border-neutral-subtle")};
+    border-right: 1px solid var(--mb-color-border-neutral-subtle);
   }
 `;
 
@@ -115,7 +62,7 @@ export const PivotTableCell = styled.div<PivotTableCellProps>`
   min-height: 0;
   font-weight: ${(props) => (props.isBold ? "bold" : "normal")};
   cursor: ${(props) => (props.onClick ? "pointer" : "default")};
-  color: ${getColor};
+  color: ${getCellTextColor};
   ${borderRight}
   border-bottom: 1px solid
     ${(props) =>
@@ -128,7 +75,7 @@ export const PivotTableCell = styled.div<PivotTableCellProps>`
     css`
       /* compensate the top border */
       line-height: ${CELL_HEIGHT - 1}px;
-      border-top: 1px solid ${color("border-neutral-subtle")};
+      border-top: 1px solid var(--mb-color-border-neutral-subtle);
     `}
 
   &:hover {
@@ -163,7 +110,7 @@ export const PivotTableRoot = styled.div<PivotTableRootProps>`
   ${(props) =>
     props.isDashboard
       ? css`
-          border-top: 1px solid ${color("border-neutral-subtle")};
+          border-top: 1px solid var(--mb-color-border-neutral-subtle);
         `
       : null}
 
