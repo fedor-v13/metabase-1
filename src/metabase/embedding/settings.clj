@@ -341,6 +341,8 @@
   :type       :json
   :visibility :public
   :setter     :none
+  ;; Never stored: the getter computes the value from `EmbeddingTheme` rows, so there is nothing to encrypt.
+  :encryption :no
   :export?    false
   :doc        false
   :getter     (fn []
