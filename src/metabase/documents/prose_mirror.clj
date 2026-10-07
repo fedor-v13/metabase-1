@@ -2,7 +2,18 @@
   "Manipulate the prose mirror ast for documents"
   (:require
    [clojure.string :as str]
-   [clojure.walk :as walk]))
+   [clojure.walk :as walk]
+   [metabase.util.malli.registry :as mr]))
+
+(mr/def ::ast
+  "A prose-mirror document AST as it arrives at the API. Normalized to keyword keys, the same form the app-DB
+  `:document` column transform yields."
+  [:map
+   {:decode/normalize (fn [ast]
+                        (cond-> ast
+                          (map? ast) walk/keywordize-keys))
+    :closed           false}
+   [:type :string]])
 
 (def card-embed-type
   "Type of a card-embed node"
@@ -73,6 +84,15 @@
        (mapcat (juxt :text (comp :label :attrs)))
        (remove str/blank?)
        (str/join " ")))
+
+(defn node-entity-id
+  "The referenced entity id carried by a `smartLink` (`:entityId`) or `cardEmbed` (`:id`) node, or nil.
+
+   Returning the id only when it is a positive integer keeps any downstream Toucan lookup parameterized."
+  [{:keys [type attrs]}]
+  (let [id (if (= smart-link-type type) (:entityId attrs) (:id attrs))]
+    (when (pos-int? id)
+      id)))
 
 (defn card-ids
   "Get all card-ids"

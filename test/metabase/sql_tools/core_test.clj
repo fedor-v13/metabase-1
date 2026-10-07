@@ -61,6 +61,25 @@
                   {:table (mt/id :products)}}
                 (sql-tools/referenced-tables driver/*driver* query))))))))
 
+(deftest referenced-tables-fetches-only-named-tables-test
+  (testing "GHY-4251: referenced-tables looks up only the Tables the SQL names, never the Database's whole catalog.
+           Fetching the catalog per entity made dependency analysis scale with warehouse size instead of query size,
+           OOM-killing instances with ~20k synced tables."
+    (sql-tools.tu/test-parser-backends
+     (mt/test-driver :h2
+       (let [catalog-fetches (atom 0)
+             all-tables      lib.metadata/tables]
+         (with-redefs [lib.metadata/tables (fn [mp] (swap! catalog-fetches inc) (all-tables mp))]
+           (testing "the referenced table still resolves"
+             ;; H2 stores table names upper-cased while the query spells them lower-case, so this also covers the
+             ;; case-folding that makes an exact name match unusable (the same mismatch Snowflake has).
+             (is (= #{{:table (mt/id :orders)}}
+                    (sql-tools/referenced-tables driver/*driver*
+                                                 (lib/native-query (mt/metadata-provider)
+                                                                   "select id from orders")))))
+           (testing "and it did so without fetching the catalog"
+             (is (zero? @catalog-fetches)))))))))
+
 ;;; ------------------------------------------------ replace-names -------------------------------------------------
 
 (deftest ^:parallel replace-names-table-test
@@ -231,6 +250,33 @@
         "SELECT * FROM foo EXCEPT ALL SELECT * FROM bar UNION ALL SELECT * FROM baz"
         "SELECT * FROM foo EXCEPT ALL SELECT * FROM bar INTERSECT ALL SELECT * FROM baz"))))
 
+(defn- placeholder-count
+  [sql]
+  (count (re-seq #"\?" sql)))
+
+(deftest ^:parallel is-single-stmt-of-type-placeholder-cast-test
+  (testing "queries with `?::` are parsed correctly"
+    (doseq [sql ["SELECT ?::date"
+                 "SELECT (?::date - x::date)"
+                 "SELECT ?::text, ?::integer, ?::boolean FROM t WHERE x = ?"
+                 "SELECT (?::date - CURRENT_DATE) AS diff"]]
+      (let [{out-sql :sql :as result} (sql-tools/is-single-stmt-of-type? :postgres sql "read")]
+        (is (=? {:is-single-stmt? true :allowed-stmt-type? true :sql string?} result))
+        (is (= (placeholder-count sql) (placeholder-count out-sql))))))
+  (testing "a query with `?::` inside string literals are left untouched"
+    (is (= {:is-single-stmt? true :allowed-stmt-type? true :sql "SELECT '?::date'"}
+           (sql-tools/is-single-stmt-of-type? :postgres "select '?::date'" "read"))))
+  (testing "multi-statement queries with placeholder casts are still rejected"
+    (are [sql] (=? {:is-single-stmt? false :allowed-stmt-type? false}
+                   (sql-tools/is-single-stmt-of-type? :postgres sql "read"))
+      "SELECT ?::date; DROP TABLE t"
+      "SET ROLE NONE; SELECT ?::date")))
+
+(deftest ^:parallel is-single-stmt-of-type-qdcolon-dialects-test
+  (testing "databricks' native `expr?::type` try-cast operator is not split apart"
+    (is (=? {:is-single-stmt? true :allowed-stmt-type? true :sql #"(?i).*TRY_CAST\(x AS DATE\).*"}
+            (sql-tools/is-single-stmt-of-type? :databricks "SELECT x?::date FROM t" "read")))))
+
 (deftest ^:parallel is-single-stmt-of-type-not-stripped-test
   (testing "we don't remove value clauses when validating impersonated queries (#74284)"
     (let [values-query (str "SELECT x FROM (VALUES " (str/join ", " (repeat 105 "(1)")) ") AS t(x)")]
@@ -241,4 +287,14 @@
         (str "SELECT 1; " values-query) false false
         (str "SET ROLE none; " values-query) false false
         (str values-query "; SELECT 1") false false
-        (str values-query "; SET ROLE none") false false))))
+        (str values-query "; SET ROLE none") false false)))
+  (testing "we don't remove large IN lists, tuple lists, or arrays when validating impersonated queries"
+    (doseq [query [(str "SELECT x FROM t WHERE x IN (" (str/join ", " (range 105)) ")")
+                   (str "SELECT x FROM t WHERE (x, y) IN (" (str/join ", " (map #(format "(%d, %d)" % %) (range 105))) ")")
+                   (str "SELECT x FROM t WHERE x = ANY(ARRAY[" (str/join ", " (range 105)) "])")]]
+      (are [sql is-single-stmt? allowed-stmt-type?]
+           (= {:is-single-stmt? is-single-stmt? :allowed-stmt-type? allowed-stmt-type? :sql sql}
+              (sql-tools/is-single-stmt-of-type? :postgres sql "read"))
+        query true true
+        (str "SELECT 1; " query) false false
+        (str query "; SELECT 1") false false))))

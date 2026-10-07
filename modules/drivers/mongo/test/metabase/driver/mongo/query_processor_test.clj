@@ -255,7 +255,25 @@
                   compiled (mongo.qp/mbql->native query)
                   let-lhs (-> compiled (get-in [:query 0 "$lookup" :let]) keys first)]
               (is (and (not (str/includes? let-lhs "."))
-                       (str/includes? let-lhs "source_categories"))))))))))
+                       (str/includes? let-lhs "source_categories")))))
+          (testing "Nested fields projected from a joined collection return their real values (#81546)"
+            (let [query (lib/query
+                         (mt/metadata-provider)
+                         (mt/mbql-query tips
+                           {:fields   [$_id
+                                       $tips.venue.categories
+                                       &Tips.$tips.venue.categories]
+                            :joins    [{:alias        "Tips"
+                                        :source-table $$tips
+                                        :condition    [:= $_id &Tips.$_id]
+                                        :fields       :none}]
+                            :order-by [[:asc $_id]]
+                            :limit    3}))
+                  rows  (mt/rows (qp/process-query query))]
+              (is (= [[1 ["Gluten-Free" "Café"]       ["Gluten-Free" "Café"]]
+                      [2 ["Homestyle" "Eatery"]       ["Homestyle" "Eatery"]]
+                      [3 ["Cage-Free" "Coffee House"] ["Cage-Free" "Coffee House"]]]
+                     rows)))))))))
 
 (deftest ^:parallel multiple-distinct-count-test
   (mt/test-driver :mongo
@@ -564,6 +582,29 @@
         {"$expr" {"$eq" ["$price" {"$add" [{"$subtract" ["$price" 5]} 100]}]}}
         [:= $price [:+ [:- $price 5] 100]]))))
 
+(deftest ^:parallel filter-value-compilation-test
+  (testing "literal filter values compile as plain values"
+    (let [email [:field "EMAIL" nil]]
+      (testing "simple comparisons use the direct match form"
+        (is (= {"EMAIL" "$abc"}
+               (mongo.qp/compile-filter [:= email [:value "$abc" {:base_type :type/Text}]])))
+        (is (= {"EMAIL" {"$ne" "$abc"}}
+               (mongo.qp/compile-filter [:!= email [:value "$abc" {:base_type :type/Text}]])))
+        (is (= {"EMAIL" {"$gte" "$$abc"}}
+               (mongo.qp/compile-filter [:>= email [:value "$$abc" {:base_type :type/Text}]])))
+        (is (= {"EMAIL" "$$abc"}
+               (mongo.qp/compile-filter [:= email [:value "$$abc" {:base_type :type/Text}]]))))
+      (testing "literals not wrapped in a :value clause are treated the same way"
+        (is (= {"EMAIL" "$abc"}
+               (mongo.qp/compile-filter [:= email "$abc"]))))
+      (testing "when the comparison needs `$expr`, the value is wrapped with `$literal`"
+        (is (= {"$expr" {"$eq" [{"$concat" ["$EMAIL" "!"]}
+                                {"$literal" "$abc"}]}}
+               (mongo.qp/compile-filter [:= [:concat email "!"] [:value "$abc" {:base_type :type/Text}]]))))
+      (testing "comparisons against fields compile to field paths"
+        (is (= {"$expr" {"$eq" ["$EMAIL" "$EMAIL"]}}
+               (mongo.qp/compile-filter [:= email email])))))))
+
 (deftest ^:parallel unique-alias-index-test
   (mt/test-driver
     :mongo
@@ -814,3 +855,24 @@
             ;; match the entire `BsonXxx` wrapper-class family, not just a hand-picked subset.
             (is (not (re-find #"Bson[A-Z]\w*"
                               (pr-str (:query compiled)))))))))))
+
+(deftest ^:parallel escape-regex-literal-test
+  (are [in out] (= out (#'mongo.qp/escape-regex-literal in))
+    "abc"    "abc"
+    "a.b"    "a\\.b"
+    ".*"     "\\.\\*"
+    "a[bc]"  "a\\[bc\\]"
+    "(a|b)"  "\\(a\\|b\\)"
+    "a\\b"   "a\\\\b"))
+
+(deftest ^:parallel value-rvalue-rejects-collections-test
+  (testing "a scalar :value passes through"
+    (is (= "abc" (#'mongo.qp/->rvalue [:value "abc" {:base_type :type/Text}])))
+    (is (= 5 (#'mongo.qp/->rvalue [:value 5 {:base_type :type/Integer}])))
+    (is (nil? (#'mongo.qp/->rvalue [:value nil {:base_type :type/Text}]))))
+  (testing "a collection :value is rejected rather than spliced into a BSON operator position"
+    (are [v] (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid filter value"
+                               (#'mongo.qp/->rvalue [:value v {:base_type :type/Text}]))
+      {:$function {:body "function(){return true;}" :args [] :lang "js"}}
+      {:$where "sleep(1000)"}
+      [1 2 3])))

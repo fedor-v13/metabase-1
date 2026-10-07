@@ -8,17 +8,26 @@
    [metabase.api.macros :as api.macros]
    [metabase.collections.models.collection :as collection]
    [metabase.eid-translation.core :as eid-translation]
+   [metabase.lib.core :as lib]
    [metabase.lib.schema.id :as lib.schema.id]
    [metabase.permissions.core :as perms]
    [metabase.public-sharing.validation :as public-sharing.validation]
    [metabase.queries.core :as queries]
    [metabase.util :as u]
    [metabase.util.i18n :refer [tru]]
-   [metabase.util.json :as json]
    [metabase.util.malli.schema :as ms]
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
+
+(defn- check-native-query-perms!
+  "Creating or updating a native query action requires ad-hoc native query permission on the target database."
+  [database-id dataset-query]
+  (when (and (seq dataset-query) (lib/native? dataset-query))
+    (when-let [db-id (or database-id (:database dataset-query))]
+      (api/check-403
+       (= :query-builder-and-native
+          (perms/full-database-permission-for-user api/*current-user-id* :perms/create-queries db-id))))))
 
 (api.macros/defendpoint :get "/" :- [:sequential ::actions.schema/action]
   "Returns actions that can be used for QueryActions. By default lists all viewable actions. Pass optional
@@ -91,6 +100,7 @@
     (throw (ex-info (tru "Must provide a database_id for query actions")
                     {:type        action-type
                      :status-code 400})))
+  (check-native-query-perms! database_id (:dataset_query action))
   (let [model (api/write-check :model/Card model_id)]
     (when (and (= action-type :implicit)
                (not (queries/model-supports-implicit-actions? model)))
@@ -131,6 +141,11 @@
       (throw (ex-info (tru "HTTP actions are not supported.")
                       {:type        :http
                        :status-code 400})))
+    (when-let [model-id (:model_id action)]
+      (when (not= model-id (:model_id existing-action))
+        (api/write-check :model/Card model-id)))
+    (when-let [dataset-query (:dataset_query action)]
+      (check-native-query-perms! (:database_id action) dataset-query))
     (actions/update! (assoc action :id id) existing-action))
   (let [{:keys [parameters type] :as action} (actions/select-action :id id)]
     (analytics/track-event! :snowplow/action
@@ -192,11 +207,11 @@
   [{:keys [action-id]} :- [:map
                            [:action-id ms/PositiveInt]]
    {:keys [parameters]} :- [:map
-                            [:parameters ms/JSONString]]]
+                            [:parameters ::actions.schema/prefetch-parameter-values]]]
   (actions/check-actions-enabled! action-id)
   (-> (actions/select-action :id action-id :archived false)
       api/read-check
-      (actions/fetch-values (json/decode parameters))))
+      (actions/fetch-values parameters)))
 
 (defn- remap-parameter-keys
   "Translate incoming `parameters` keys to the destination parameter `:id` the
@@ -234,7 +249,7 @@
                     [:id [:or ::actions.schema/id ms/NanoIdString]]]
    _query-params
    {:keys [parameters], :as _body} :- [:maybe [:map
-                                               [:parameters {:optional true} [:maybe [:map-of :keyword any?]]]]]]
+                                               [:parameters {:optional true} [:maybe ::actions.schema/execute-parameter-values]]]]]
   (let [resolved-id (eid-translation/->id-or-404 :action id)
         {:keys [type] :as action} (api/read-check (actions/select-action :id resolved-id :archived false))]
     (when (= type :http)

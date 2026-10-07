@@ -42,7 +42,6 @@
    [metabase.test.util.misc :as tu.misc]
    [metabase.test.util.thread-local :as tu.thread-local]
    [metabase.test.util.timezone :as test.tz]
-   [metabase.util :as u]
    [metabase.util.log :as log]
    [metabase.util.log.capture]
    [metabase.util.random :as u.random]
@@ -104,6 +103,8 @@
 #_{:clj-kondo/ignore [:discouraged-var :deprecated-var]}
 (p/import-vars
  [actions.test-util
+  action-executions
+  latest-query-execution-id
   with-actions
   with-actions-disabled
   with-actions-enabled
@@ -186,6 +187,7 @@
   with-no-data-perms-for-all-users!
   with-full-data-perms-for-all-users!
   with-db-perm-for-group!
+  with-db-perms-for-group!
   with-perm-for-group!
   with-perm-for-group-and-table!
   with-data-analyst-role!]
@@ -354,12 +356,10 @@
    #_model       :default
    #_built-query :default]
   [query-type model built-query]
-  (u/prog1 built-query
-    (let [compiled-query-arg-map (into {} (map-indexed (fn [i v] [(str "compiled-query-arg-" i) v]) (rest <>)))]
-      (log/with-context (merge {:query-type query-type
-                                :model model
-                                :compiled-query (first <>)
-                                :compiled-query-args (rest <>)}
-                               compiled-query-arg-map)
-        (when config/is-test?
-          (log/info "Compiled query"))))))
+  (log/with-context {:query-type query-type
+                     :model model
+                     :compiled-query (first built-query)
+                     :compiled-query-args (rest built-query)}
+    (when config/is-test?
+      (log/info "Compiled query")))
+  built-query)

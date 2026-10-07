@@ -195,7 +195,7 @@
    "/ee"                   {"/custom-viz-plugin" (handlers/routes metabase.custom-viz-plugin.sandbox-api/routes
                                                                   metabase.custom-viz-plugin.api/routes)}
    "/eid-translation"      (+auth 'metabase.eid-translation.api)
-   "/email"                metabase.channel.api/email-routes
+   "/email"                (+auth metabase.channel.api/email-routes)
    "/embed"                (+message-only-exceptions metabase.embedding-rest.api/embedding-routes)
    "/embed-mcp"            (+auth metabase.mcp.callback-api/routes)
    "/embed-theme"          (+auth metabase.embedding-rest.api/theme-routes)

@@ -67,6 +67,7 @@
    [metabase.metabot.tools.shared.instructions :as instructions]
    [metabase.metabot.tools.shared.llm-shape :as llm-shape]
    [metabase.models.interface :as mi]
+   [metabase.permissions.core :as perms]
    [metabase.transforms.core :as transforms]
    [metabase.util.log :as log]
    [metabase.util.malli :as mu]
@@ -268,10 +269,12 @@
 ;; ----- Fetch handlers (one per URI shape) -----
 
 (defn- fetch-databases-list [query-params]
-  (let [dbs (->> (t2/select [:model/Database :id :name :engine :description :is_audit]
-                            :is_audit false
-                            :router_database_id nil
-                            {:order-by [[:%lower.name :asc]]})
+  (let [all (t2/select [:model/Database :id :name :engine :description :is_audit]
+                       :is_audit false
+                       :router_database_id nil
+                       {:order-by [[:%lower.name :asc]]})
+        _   (perms/prime-database-perms-cache {:db-ids (into #{} (map :id) all)})
+        dbs (->> all
                  (filter mi/can-read?)
                  (mapv present-database))]
     (list-result :databases dbs query-params)))
@@ -336,6 +339,7 @@
 (defn- fetch-database-tables [id-str query-params]
   (let [db-id  (parse-long id-str)
         _      (warehouses/get-database db-id)
+        _      (perms/prime-table-perms-cache {:db-ids #{db-id}})
         tables (->> (t2/select [:model/Table :id :name :display_name :schema :db_id :description]
                                :db_id  db-id
                                :active true
@@ -438,11 +442,18 @@
   (when db-id
     (warehouses/get-database db-id)))
 
-(defn- check-table-resource-database [table-id]
+(defn check-table-resource-database
+  "Require that `table-id`'s backing database is addressable as a Metabot resource (see
+  [[check-resource-database]]). Exported for [[metabase.metabot.tools.metadata]], which needs the
+  same guard for the `get_field_values` tool."
+  [table-id]
   (when-let [table (api/read-check :model/Table table-id)]
     (check-resource-database (:db_id table))))
 
-(defn- check-card-resource-database [card-id]
+(defn check-card-resource-database
+  "Require that `card-id`'s (model/question/metric) backing database is addressable as a Metabot
+  resource (see [[check-resource-database]]). Exported for [[metabase.metabot.tools.metadata]]."
+  [card-id]
   (when-let [card (api/read-check :model/Card card-id)]
     (check-resource-database (:database_id card))))
 
@@ -617,11 +628,11 @@
                                       :collection_id :database_id :table_id]
                                      {:where    [:and
                                                  [:= :archived false]
-                                                 [:exists {:select 1
-                                                           :from   [[:report_dashboardcard :dc]]
-                                                           :where  [:and
-                                                                    [:= :dc.card_id :report_card.id]
-                                                                    [:= :dc.dashboard_id dashboard-id]]}]]
+                                                 [:exists ^:allow-subquery {:select 1
+                                                                            :from   [[:report_dashboardcard :dc]]
+                                                                            :where  [:and
+                                                                                     [:= :dc.card_id :report_card.id]
+                                                                                     [:= :dc.dashboard_id dashboard-id]]}]]
                                       :order-by [[:%lower.name :asc]]})
                           (filter mi/can-read?)
                           (mapv present-card))]

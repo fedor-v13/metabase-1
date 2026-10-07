@@ -353,6 +353,24 @@
                (run-venues-count-query)))
         (fails-without-token (run-venues-count-query))))))
 
+(deftest e2e-uncoerceable-attribute-fails-closed-test
+  (mt/test-drivers (e2e-test-drivers)
+    (testing "uncoerceable user attribute does not silently drop the sandbox filter (#81821)"
+      (testing "integer column"
+        (met/with-gtaps! {:gtaps {:venues (venues-category-mbql-gtap-def)}, :attributes {"cat" "a"}}
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo
+               #"User attribute `cat` value `a` cannot be coerced"
+               (run-venues-count-query)))))
+      (testing "float column"
+        (met/with-gtaps! {:gtaps {:venues {:query (mt/mbql-query venues)
+                                           :remappings {:cat ["variable" [:field (mt/id :venues :latitude) nil]]}}}
+                          :attributes {"cat" "a"}}
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo
+               #"User attribute `cat` value `a` cannot be coerced"
+               (run-venues-count-query))))))))
+
 (deftest e2e-test-6
   (mt/test-drivers (e2e-test-drivers)
     (testing "Another basic test, this one uses a stringified float for the login attribute"
@@ -887,7 +905,7 @@
                                          :cache-strategy {:type :ttl
                                                           :multiplier 60
                                                           :avg-execution-ms 10
-                                                          :min-duration-ms 0})))]
+                                                          :min_duration_ms 0})))]
         (testing "Run the query, should not be cached"
           (let [result (run-query)]
             (is (= nil
@@ -1229,7 +1247,7 @@
                           (let [results (qp/process-query (assoc query :cache-strategy {:type :ttl
                                                                                         :multiplier 60
                                                                                         :avg-execution-ms 10
-                                                                                        :min-duration-ms 0}))]
+                                                                                        :min_duration_ms 0}))]
                             {:cached? (boolean (:cached (:cache/details results)))
                              :num-rows (count (mt/rows results))}))]
           (testing "Make sure the underlying card for the GTAP returns cached results without sandboxing"
@@ -1298,6 +1316,45 @@
                     (is (not (str/includes? (-> sandboxed-result :data :native_form :query)
                                             (:table_name persisted-info)))
                         "Erroneously used the persisted model cache")))))))))))
+
+(deftest persistence-disabled-when-sandboxed-via-implicit-join-test
+  (testing "a persisted model that reaches the sandboxed table through an implicit FK join must not use the cache"
+    (mt/test-drivers (mt/normal-drivers-with-feature :persist-models)
+      (mt/dataset test-data
+        (met/with-gtaps! {:gtaps {:products
+                                  {:remappings {:category
+                                                ["dimension"
+                                                 [:field (mt/id :products :category) nil]]}}}}
+          (mt/with-persistence-enabled! [persist-models!]
+            #_{:clj-kondo/ignore [:discouraged-var]}
+            (mt/with-temp [:model/Card model
+                           {:type :model
+                            ;; products is reached only through `:source-field`, so it is not a `:source-table` any
+                            ;; sandbox can be matched against until `add-implicit-joins` has run
+                            :dataset_query (mt/mbql-query orders
+                                             {:aggregation [[:count]]
+                                              :breakout    [[:field (mt/id :products :category)
+                                                             {:source-field (mt/id :orders :product_id)}]]})}]
+              (mt/with-test-user :crowberto
+                (persist-models!))
+              (let [persisted-info (t2/select-one :model/PersistedInfo
+                                                  :database_id (mt/id)
+                                                  :card_id (:id model))
+                    query          (mt/mbql-query nil {:source-table (str "card__" (:id model))})
+                    result         (met/with-user-attributes! :rasta {"category" "Gizmo"}
+                                     (mt/with-test-user :rasta
+                                       (qp/process-query query)))]
+                (is (= "persisted" (:state persisted-info))
+                    "Model failed to persist")
+                (testing "does not use the cache table"
+                  (is (not (str/includes? (-> result :data :native_form :query)
+                                          (:table_name persisted-info)))
+                      "Erroneously used the persisted model cache for a sandboxed query"))
+                (testing "and so sees no category outside its sandbox"
+                  ;; orders whose product the sandbox hides still come back, with a null category, so it is the
+                  ;; non-null ones that say whether anything leaked
+                  (is (= #{"Gizmo"}
+                         (into #{} (comp (map first) (filter some?)) (mt/rows result)))))))))))))
 
 (deftest is-sandboxed-success-test
   (testing "Integration test that checks that is_sandboxed is recorded in query_execution correctly for a sandboxed query"
@@ -1510,7 +1567,7 @@
                                            :cache-strategy {:type :ttl
                                                             :multiplier 60
                                                             :avg-execution-ms 10
-                                                            :min-duration-ms 0})))]
+                                                            :min_duration_ms 0})))]
           (testing "Run query with login_attributes"
             (met/with-user-attributes! :rasta {"cat" 50}
               (mt/with-test-user :rasta
@@ -1920,7 +1977,7 @@
                (mt/rows (mt/user-http-request :rasta :post 202 "dataset" query))))))))
 
 (deftest ^:parallel attr-remapping-parameter-type-test
-  (testing "attr-remapping->parameter uses explicit parameter types instead of :category (QUE2-326)"
+  (testing "attr-remapping->parameter uses explicit parameter types instead of :category"
     (let [attr-remapping->parameter #'sandboxing/attr-remapping->parameter
           mp                        (mt/metadata-provider)]
       (testing "numeric field → :number/="
@@ -1928,7 +1985,18 @@
                (:type (attr-remapping->parameter mp {"cat" "50"} ["cat" [:variable [:field (mt/id :venues :price) nil]]])))))
       (testing "text field → :string/="
         (is (= :string/=
-               (:type (attr-remapping->parameter mp {"cat" "foo"} ["cat" [:variable [:field (mt/id :venues :name) nil]]]))))))))
+               (:type (attr-remapping->parameter mp {"cat" "foo"} ["cat" [:variable [:field (mt/id :venues :name) nil]]])))))
+      (testing "uncoerceable attribute against numeric field throws instead of dropping the filter (#81821)"
+        (testing "integer column"
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo
+               #"User attribute `cat` value `a` cannot be coerced"
+               (attr-remapping->parameter mp {"cat" "a"} ["cat" [:variable [:field (mt/id :venues :price) nil]]]))))
+        (testing "float column"
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo
+               #"User attribute `cat` value `a` cannot be coerced"
+               (attr-remapping->parameter mp {"cat" "a"} ["cat" [:variable [:field (mt/id :venues :latitude) nil]]]))))))))
 
 (deftest unix-timestamp-coercion-with-mbql-sandbox-test
   (testing "UNIX timestamp coercion should be applied when querying through an MBQL sandbox (#69867)"
@@ -2150,3 +2218,17 @@
                   :let [source-col (col-by-name (:remapped_from col))]]
             (is (= (:name col)
                    (:remapped_to source-col)))))))))
+
+;;; the source-Card counterpart of the test below lives in [[metabase-enterprise.sandbox.api.card-test]], which is
+;;; where sandboxing tests that need a saved Card go
+
+(deftest ^:synchronized caller-supplied-sandbox-marker-is-ignored-test
+  (testing "a query carrying the middleware's own ::sandboxing/sandbox? marker is still sandboxed"
+    (met/with-gtaps! {:gtaps {:venues (venues-category-mbql-gtap-def)}, :attributes {"cat" 50}}
+      (is (= [[10]]
+             (mt/format-rows-by
+              [int]
+              (mt/rows
+               (qp/process-query
+                (assoc-in (mt/mbql-query venues {:aggregation [[:count]]})
+                          [:query ::sandboxing/sandbox?] true)))))))))

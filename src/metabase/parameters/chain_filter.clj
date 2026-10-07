@@ -218,7 +218,11 @@
                                      :fk-field.active]
                          :order-by [[:fk-field.id :desc]
                                     [:pk-field.id :desc]]})
-        joins (for [{:keys [t1 f1 t2 f2]} rows]
+        ;; The `:fk-table.active` / `:pk-field.active` LEFT JOIN clauses null out the target endpoint
+        ;; when the FK-owning table or FK target field is inactive; drop those rows so no nil-keyed
+        ;; entries leak into the join graph. Regression for #80557.
+        joins (for [{:keys [t1 f1 t2 f2]} rows
+                    :when (and t1 f1 t2 f2)]
                 {:lhs {:table t1, :field f1}
                  :rhs {:table t2, :field f2}})
         reversed (map (fn [{:keys [lhs rhs]}]
@@ -260,7 +264,7 @@
            seen  #{start}]
       (let [path (peek paths)
             node (peek path)]
-        (cond (nil? node)
+        (cond (nil? path)
               nil
               ;; found a path, bfs finds shortest first
               (= node end)
@@ -559,7 +563,8 @@
 
 (defn- implicit-pk->name-mapping-query
   [field-id mapping-type]
-  {:select    [[:dest.id :id] [[:inline mapping-type] :mapping_type]]
+  ^:allow-subquery
+  {:select    [[:dest.id :id] [^:allow-raw-sql [:inline mapping-type] :mapping_type]]
    :from      [[:metabase_field :source]]
    :left-join [[:metabase_table :table] [:= :source.table_id :table.id]
                [:metabase_field :dest] [:= :dest.table_id :table.id]]
@@ -577,8 +582,10 @@
 
 (defn- remapped-field-id-query [field-id]
   {:select [[:mapping.id :id] [:mapping.mapping_type :mapping_type]]
-   :from   [[{::union (into [;; Explicit FK Field->Field remapping
-                             {:select [[:dimension.human_readable_field_id :id] [[:inline "fk->field"] :mapping_type]]
+   :from   [[^:allow-subquery
+             {::union (into [;; Explicit FK Field->Field remapping
+                             ^:allow-subquery
+                             {:select [[:dimension.human_readable_field_id :id] [^:allow-raw-sql [:inline "fk->field"] :mapping_type]]
                               :from   [[:dimension :dimension]]
                               :where  [:and
                                        [:= :dimension.field_id field-id]
@@ -587,6 +594,7 @@
                             (when *allow-implicit-uuid-field-remapping*
                               [;; Implicit FK Field -> PK Field -> [Name] Field remapping
                                (implicit-pk->name-mapping-query
+                                ^:allow-subquery
                                 {:select    [:fk_target_field_id]
                                  :from      [:metabase_field]
                                  :where     [:and

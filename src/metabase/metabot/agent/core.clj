@@ -3,6 +3,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [medley.core :as m]
    [metabase.analytics-interface.core :as analytics]
    [metabase.api-scope.core :as api-scope]
    [metabase.api.common :as api]
@@ -12,6 +13,8 @@
    [metabase.metabot.agent.messages :as messages]
    [metabase.metabot.agent.profiles :as profiles]
    [metabase.metabot.agent.streaming :as streaming]
+   [metabase.metabot.capabilities :as capabilities]
+   [metabase.metabot.metadata-perms :as metabot.perms]
    [metabase.metabot.provider-util :as provider-util]
    [metabase.metabot.scope :as scope]
    [metabase.metabot.self :as self]
@@ -146,11 +149,11 @@
 (mr/def ::state
   "Agent state containing queries, charts, chart-configs, todos, transforms, and link-registry."
   [:map
-   [:queries {:optional true} [:map-of [:or :string :keyword] :map]]
-   [:charts {:optional true} [:map-of [:or :string :keyword] :map]]
-   [:chart-configs {:optional true} [:map-of [:or :string :keyword] :map]]
-   [:todos {:optional true} [:sequential :map]]
-   [:transforms {:optional true} [:map-of [:or :string :keyword] :map]]
+   [:queries {:optional true} [:map-of [:or :string :keyword] ms/Map]]
+   [:charts {:optional true} [:map-of [:or :string :keyword] ms/Map]]
+   [:chart-configs {:optional true} [:map-of [:or :string :keyword] ms/Map]]
+   [:todos {:optional true} [:sequential ms/Map]]
+   [:transforms {:optional true} [:map-of [:or :string :keyword] ms/Map]]
    [:link-registry {:optional true} [:map-of [:or :string :keyword] :string]]])
 
 (mr/def ::context
@@ -201,6 +204,15 @@
                     (contains? terminal-tools (:function p))
                     (contains? success-ids (:id p))))
              parts)))))
+
+(defn- terminal-error-message
+  "Message from a tool failure no retry can fix (a permission denial), or nil if there was none."
+  [parts]
+  (some (fn [part]
+          (when (and (= (:type part) :tool-output)
+                     (get-in part [:result :terminal-error?]))
+            (not-empty (get-in part [:result :output]))))
+        parts))
 
 (defn- should-continue?
   "Determine if agent should continue iterating."
@@ -464,6 +476,11 @@
 (defn- final-state-part [memory]
   {:type :data, :data-type "state", :version 1, :data (memory/get-state memory)})
 
+(defn- terminal-error-text-part
+  "Tool results are not rendered in the conversation, so a terminal error needs assistant text."
+  [message]
+  {:type :text, :id (str (random-uuid)), :text message})
+
 (defn- error-part [^Exception e]
   {:type :error, :error {:message (.getMessage e), :type (str (type e)), :data (ex-data e)}})
 
@@ -528,21 +545,33 @@
         (do
           (log/debug "Got parts" {:count (count parts) :types (mapv :type parts)})
           (swap! memory-atom update-memory parts)
-          (cond
-            (reduced? result')
-            (assoc loop-state :status :reduced :result @result')
+          ;; these profiles cannot answer in text, so a denial would otherwise loop to max-iterations
+          (let [terminal-error (when (:required-tool-call? profile)
+                                 (terminal-error-message parts))]
+            (cond
+              (reduced? result')
+              (assoc loop-state :status :reduced :result @result')
 
-            (should-continue? iteration max-iter terminal-tools parts)
-            (assoc loop-state :result result' :iteration (inc iteration))
+              terminal-error
+              (let [result'' (rf result' (terminal-error-text-part terminal-error))]
+                (if (reduced? result'')
+                  (assoc loop-state :status :reduced :result @result'')
+                  (do (log/info "Agent loop complete" {:iterations iteration :reason :terminal-error})
+                      (assoc loop-state
+                             :status :done
+                             :result (rf result'' (final-state-part @memory-atom))))))
 
-            :else
-            (do (log/info "Agent loop complete"
-                          {:iterations iteration
-                           ;; TODO: decide if we want this reason to float up to frontend
-                           :reason     (finish-reason iteration max-iter terminal-tools parts)})
-                (assoc loop-state
-                       :status :done
-                       :result (rf result' (final-state-part @memory-atom))))))))))
+              (should-continue? iteration max-iter terminal-tools parts)
+              (assoc loop-state :result result' :iteration (inc iteration))
+
+              :else
+              (do (log/info "Agent loop complete"
+                            {:iterations iteration
+                             ;; TODO: decide if we want this reason to float up to frontend
+                             :reason     (finish-reason iteration max-iter terminal-tools parts)})
+                  (assoc loop-state
+                         :status :done
+                         :result (rf result' (final-state-part @memory-atom)))))))))))
 
 ;;; Public API
 
@@ -612,7 +641,9 @@
             [:context {:optional true} [:maybe ::context]]
             [:tracking-opts {:optional true} [:maybe ::tracking-opts]]
             [:debug? {:optional true} [:maybe :boolean]]]]
-  (let [profile-id         (:profile-id opts)
+  (let [opts               (m/update-existing-in opts [:context :capabilities]
+                                                 capabilities/enforce-permissions)
+        profile-id         (:profile-id opts)
         debug?             (:debug? opts)
         labels             {:profile-id (name profile-id)}
         perms              (or scope/*current-user-metabot-permissions*
@@ -634,7 +665,10 @@
                       scope/*current-user-scope*               scopes
                       scope/*current-user-metabot-permissions* perms
                       scope/*current-user-capabilities*        (get-in opts [:context :capabilities] #{})
-                      scope/*current-loadable-skill-ids*       (atom #{})]
+                      scope/*current-loadable-skill-ids*       (atom #{})
+                      ;; One memo for the whole turn: the prompt render and every tool call ask the
+                      ;; same tables the same permission questions.
+                      metabot.perms/*cache*                    (atom {})]
               (try
                 (let [agent              (init-agent opts)
                       {result    :result

@@ -49,6 +49,12 @@
   {:metadata/card   ::lib.schema.metadata/card
    :metadata/column ::lib.schema.metadata/column})
 
+;; TODO (Cam 2026-08-27) Consider whether we should just have this be the normal behavior for normalizing
+;; application-database-style metadata to Lib-style metadata, e.g. why can't we just use
+;;
+;;    (metabase.lib.core/normalize :metabase.lib.schema.metadata/table table-metadata)
+;;
+;; to do this? Seems like these rules can be rolled into the schemas themselves
 (mu/defn instance->metadata
   "Convert a (presumably) Toucan 2 instance of an application database model with `snake_case` keys to a Lib style
   metadata instance with `:lib/type` and `kebab-case` keys."
@@ -81,7 +87,7 @@
                                          #_resolved-query clojure.lang.IPersistentMap]
   [query-type model parsed-args honeysql]
   (merge (next-method query-type model parsed-args honeysql)
-         {:select [:id :engine :name :dbms_version :settings :is_audit :details :write_data_details :admin_details :timezone :router_database_id]}))
+         {:select [:id :engine :name :dbms_version :settings :is_audit :is_attached_dwh :details :write_data_details :admin_details :timezone :router_database_id]}))
 
 (t2/define-after-select :metadata/database
   [database]
@@ -181,11 +187,11 @@
                 [(t2/table-name :model/Dimension) :dimension]
                 [:and
                  [:= :dimension/field_id :field/id]
-                 [:inline [:in :dimension/type ["external" "internal"]]]]
+                 [:in :dimension/type ["external" "internal"]]]
                 [(t2/table-name :model/FieldValues) :values]
                 [:and
                  [:= :values/field_id :field/id]
-                 [:= :values/type [:inline "full"]]]]}))
+                 [:= :values/type "full"]]]}))
 
 (t2/define-after-select :metadata/column
   [field]
@@ -484,7 +490,7 @@
      [:= :active true]
      [:or
       [:= :visibility_type nil]
-      [:not-in :visibility_type [:inline ["hidden" "technical" "cruft"]]]]]
+      [:not-in :visibility_type ["hidden" "technical" "cruft"]]]]
 
     :metadata/column
     (let [excluded-visibility-types (cond-> ["retired"]
@@ -493,7 +499,7 @@
        [:= :field/active true]
        [:or
         [:= :field/visibility_type nil]
-        [:not-in :field/visibility_type [:inline excluded-visibility-types]]]])
+        [:not-in :field/visibility_type excluded-visibility-types]]])
 
     :metadata/card
     [:= :card/archived false]
@@ -526,7 +532,7 @@
                           table-ids               (conj [:in (table-id-key metadata-type) table-ids])
                           card-ids                (conj [:in (card-id-key metadata-type) card-ids])
                           active-only?            (conj (active-only-honeysql-filter metadata-type {:include-sensitive? include-sensitive?}))
-                          metric?                 (conj [:= :type [:inline "metric"]])
+                          metric?                 (conj [:= :type "metric"])
                           (and metric? table-ids) (conj [:= :source_card_id nil]))]
     (reduce
      sql.helpers/where

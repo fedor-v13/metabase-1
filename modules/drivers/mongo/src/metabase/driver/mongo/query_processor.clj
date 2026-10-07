@@ -494,6 +494,11 @@ function(bin) {
     (or (nil? value) (= value ""))
     value
 
+    (coll? value)
+    (throw (ex-info (tru "Invalid filter value: expected a scalar literal.")
+                    {:type driver-api/qp.error-type.invalid-query
+                     :value value}))
+
     (isa? base-type :type/MongoBSONID)
     (ObjectId. (str value))
 
@@ -875,6 +880,9 @@ function(bin) {
                    [:>= field min-val]
                    [:<= field max-val]]))
 
+(defn- escape-regex-literal [s]
+  (str/replace (str s) #"[.*+?^${}()|\[\]\\]" "\\\\$0"))
+
 (defn- str-match-pattern [field options prefix value suffix]
   (if (driver-api/is-clause? ::not value)
     {$not (str-match-pattern field options prefix (second value) suffix)}
@@ -883,7 +891,7 @@ function(bin) {
               "Wrong prefix or suffix value.")
       {$regexMatch {"input" (->rvalue field)
                     "regex" (if (= (first value) :value)
-                              (str prefix (->rvalue value) suffix)
+                              (str prefix (escape-regex-literal (->rvalue value)) suffix)
                               {$concat (into [] (remove nil?) [(when (some? prefix) {$literal prefix})
                                                                (->rvalue value)
                                                                (when (some? suffix) {$literal suffix})])})
@@ -918,12 +926,22 @@ function(bin) {
            (not (rvalue-is-variable? rvalue))
            (not (instance? java.util.regex.Pattern rvalue)))))
 
+(defn- literal-value?
+  "Whether the `value` argument of a comparison filter clause is a literal — a `:value` clause or a bare scalar."
+  [value]
+  (or (driver-api/is-clause? :value value)
+      (not (driver-api/mbql-clause? value))))
+
 (defn- filter-expr [operator field value]
-  (let [field-rvalue (->rvalue field)
-        value-rvalue (->rvalue value)]
+  (let [field-rvalue          (->rvalue field)
+        value-rvalue          (->rvalue value)
+        literal-value-rvalue? (and (literal-value? value)
+                                   (string? value-rvalue)
+                                   (str/starts-with? value-rvalue "$"))]
     (if (and (rvalue-is-field? field-rvalue)
-             (not (rvalue-is-field? value-rvalue))
-             (rvalue-can-be-compared-directly? value-rvalue))
+             (or literal-value-rvalue?
+                 (and (not (rvalue-is-field? value-rvalue))
+                      (rvalue-can-be-compared-directly? value-rvalue))))
       ;; if we don't need to do anything fancy with field we can generate a clause like
       ;;
       ;;    {field {$lte 100}}
@@ -935,7 +953,8 @@ function(bin) {
       ;; if we need to do something fancy then we have to use `$expr` e.g.
       ;;
       ;;    {$expr {$lte [{$add [$field 1]} 100]}}
-      {$expr {operator [field-rvalue value-rvalue]}})))
+      {$expr {operator [field-rvalue (cond->> value-rvalue
+                                       literal-value-rvalue? (array-map $literal))]}})))
 
 (defmethod compile-filter :=  [[_ field value]] (filter-expr $eq field value))
 (defmethod compile-filter :!= [[_ field value]] (filter-expr $ne field value))
@@ -1755,14 +1774,18 @@ function(bin) {
 ;;; until we get around to fixing that let's just walk the query and replace all the non-add-alias-info keys with the
 ;;; values added by add-alias-info.
 (defn- HACK-update-aliases [form]
-  (letfn [(prepend-nfc-path [{nfc-path      driver-api/qp.add.nfc-path,
+  (letfn [(raw-mongo-path [id-or-name]
+            (when (pos-int? id-or-name)
+              (field->name (driver-api/field (driver-api/metadata-provider) id-or-name))))
+          (prepend-nfc-path [raw-path
+                             {nfc-path      driver-api/qp.add.nfc-path,
                               source-alias  driver-api/qp.add.source-alias,
                               desired-alias driver-api/qp.add.desired-alias,
                               :as           opts}]
             (when (seq nfc-path)
               (let [nfc-path-str (str/join \. nfc-path)]
                 (-> opts
-                    (assoc driver-api/qp.add.source-alias  (str nfc-path-str \. source-alias)
+                    (assoc driver-api/qp.add.source-alias  (or raw-path (str nfc-path-str \. source-alias))
                            driver-api/qp.add.desired-alias (str nfc-path-str \. desired-alias))
                     (dissoc driver-api/qp.add.nfc-path)))))
           (update-name [{field-name :name, source-alias driver-api/qp.add.source-alias, :as opts}]
@@ -1778,20 +1801,20 @@ function(bin) {
                        source-table
                        (not= join-alias source-table))
               (assoc opts :join-alias source-table)))
-          (update-opts [opts]
+          (update-opts [raw-path opts]
             (reduce
              (fn
                [opts f]
                (or (f opts)
                    opts))
              opts
-             [prepend-nfc-path
+             [(partial prepend-nfc-path raw-path)
               update-join-alias
               update-name
               remove-bad-join-alias
               update-join-alias]))
           (update-field-ref [[_tag id-or-name {source-alias driver-api/qp.add.source-alias, :as opts}]]
-            (let [opts (update-opts opts)]
+            (let [opts (update-opts (raw-mongo-path id-or-name) opts)]
               (if (and (string? id-or-name)
                        source-alias)
                 [:field source-alias opts]

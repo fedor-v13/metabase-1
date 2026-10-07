@@ -39,6 +39,7 @@
    [metabase.lib.test-metadata :as meta]
    [metabase.lib.test-util :as lib.tu]
    [metabase.lib.test-util.metadata-providers.mock :as providers.mock]
+   [metabase.lib.test-util.notebook-helpers :as lib.tu.notebook]
    [metabase.notification.payload.temp-storage :as temp-storage]
    [metabase.query-processor.compile :as qp.compile]
    [metabase.query-processor.error-type :as qp.error-type]
@@ -427,7 +428,11 @@
     (testing "Give us a bigint cast when the field is bigint (#22732)"
       (let [boolean-boop-field {:database-type "bigint" :nfc-path [:bleh "boop" :foobar 1234]}]
         (is (= ["(boop.bleh#>> (array[?, ?, 1234]::text[]))::bigint" "boop" "foobar"]
-               (sql/format-expr (#'sql.qp/json-query :postgres boop-identifier boolean-boop-field))))))))
+               (sql/format-expr (#'sql.qp/json-query :postgres boop-identifier boolean-boop-field))))))
+    (testing "a database-type that isn't a plain type name is quoted as an identifier instead of spliced raw"
+      (let [evil-field {:database-type "integer); select 1 --" :nfc-path [:bleh :meh]}]
+        (is (= ["(\"boop\".\"bleh\"#>> (array[?]::text[]))::\"integer); select 1 --\"" "meh"]
+               (sql.qp/format-honeysql :postgres (#'sql.qp/json-query :postgres boop-identifier evil-field))))))))
 
 (deftest ^:parallel json-query-survives-impersonation-validation-test
   (testing "JSON-extracted field SQL still extracts the same value after `validate-impersonated-query*` re-emits it (#73776)"
@@ -929,6 +934,77 @@
       (is (= (h2x/with-database-type-info [:cast "toucan" (h2x/identifier :type-name "bird type")]
                                           "bird type")
              (sql.qp/->honeysql driver/*driver* (sql.qp/mbql-clause-with-opts driver/*driver* :value {:database_type "bird type", :base_type :type/PostgresEnum} "toucan")))))))
+
+(defn- enum-value-honeysql [database-type]
+  (sql.qp/->honeysql
+   driver/*driver*
+   (sql.qp/mbql-clause-with-opts
+    driver/*driver* :value
+    {:database_type database-type, :base_type :type/PostgresEnum}
+    "toucan")))
+
+(deftest ^:parallel enum-type-name-is-never-raw-sql-test
+  (mt/test-driver :postgres
+    (testing "a caller-supplied :database-type never reaches the SQL type-name position as raw SQL"
+      (doseq [database-type ["\"int\") UNION SELECT 1 --\""
+                             "int) UNION SELECT 1 --"]]
+        (testing (pr-str database-type)
+          (let [form (h2x/unwrap-typed-honeysql-form (enum-value-honeysql database-type))]
+            (testing "the type name is an identifier, which the dialect quotes, not a raw fragment"
+              (is (h2x/identifier? (last form))))
+            (is (not (some #(and (vector? %) (= :raw (first %)))
+                           (tree-seq coll? seq form))))))))))
+
+(deftest ^:parallel enum-type-name-compiles-as-an-identifier-test
+  (mt/test-driver :postgres
+    (testing "the enum type names sync records keep working"
+      (testing "a bare type name, spaces and all"
+        (is (= (h2x/with-database-type-info [:cast "toucan" (h2x/identifier :type-name "bird type")] "bird type")
+               (enum-value-honeysql "bird type"))))
+      (testing "a schema-qualified type name stays qualified, as two identifier components"
+        (is (= (h2x/with-database-type-info
+                [:cast "toucan" (h2x/identifier :type-name "bird_schema" "bird_status")]
+                "\"bird_schema\".\"bird_status\"")
+               (enum-value-honeysql "\"bird_schema\".\"bird_status\"")))))))
+
+(deftest ^:parallel enum-type-name-malformed-test
+  (mt/test-driver :postgres
+    (testing "a malformed :database-type compiles to an inert identifier rather than raw SQL or an exception"
+      (doseq [database-type ["\""                                  ; a lone quote: starts and ends with the same char
+                             "\"\""                                ; nothing between the quotes
+                             "\"unterminated"                      ; opening quote only
+                             "unopened\""                          ; closing quote only
+                             "no_dots_at_all"
+                             "public.bird_status"                 ; dot, but unquoted
+                             "\"a\".\"b\".\"c\""                     ; more parts than Postgres accepts
+                             "\"a\"\".\"b\""                          ; an embedded doubled quote
+                             "\"\".\"\""                              ; empty components
+                             "\"a\" . \"b\""                          ; spaces around the separator
+                             ".."
+                             "\"..\""]]
+        (testing (pr-str database-type)
+          (let [form (h2x/unwrap-typed-honeysql-form (enum-value-honeysql database-type))]
+            (testing "the type name is an identifier"
+              (is (h2x/identifier? (last form))))
+            (testing "every component is a string, so the dialect can quote it"
+              (is (every? string? (last (last form)))))
+            (testing "nothing is emitted raw"
+              (is (not (some #(and (vector? %) (= :raw (first %)))
+                             (tree-seq coll? seq form)))))))))))
+
+(deftest ^:parallel day-bucketing-type-name-is-never-raw-sql-test
+  (testing "a :database-type on :day bucketing is emitted as a quoted identifier"
+    (doseq [database-type ["timestamptz) UNION SELECT 1 --"
+                           "\"int\") UNION SELECT 1 --"]]
+      (testing (pr-str database-type)
+        (let [form (h2x/unwrap-typed-honeysql-form
+                    (sql.qp/date :postgres :day (h2x/with-database-type-info :some_col database-type)))]
+          (testing "the outer cast's type name is an identifier, which the dialect quotes"
+            (is (h2x/identifier? (last form))))))))
+  (testing "a known temporal type is emitted raw, since dialects that inherit this impl reject a quoted type name"
+    (is (= ["SELECT CAST(CAST(\"some_col\" AS date) AS timestamptz)"]
+           (sql/format {:select [[(sql.qp/date :postgres :day (h2x/with-database-type-info :some_col "timestamptz"))]]}
+                       {:dialect :ansi :quoted true})))))
 
 (deftest enums-test-2
   (mt/test-driver :postgres
@@ -1639,6 +1715,88 @@
                   :params nil}
                  (-> (qp.compile/compile query)
                      (update :query #(str/split-lines (driver/prettify-native-form :postgres %)))))))))))
+
+(defn- ist-convert-timezone-expression
+  "Returns `[base ist-expr]` for a lib query on `attempts` with a `convert-timezone` expression `ist_dt`."
+  []
+  (let [mp       (mt/metadata-provider)
+        datetime (lib.metadata/field mp (mt/id :attempts :datetime))
+        base     (-> (lib/query mp (lib.metadata/table mp (mt/id :attempts)))
+                     (lib/expression "ist_dt" (lib/convert-timezone datetime "Asia/Kolkata" "UTC")))
+        ist-expr (lib.tu.notebook/find-col-with-spec base
+                                                     (lib/filterable-columns base)
+                                                     {}
+                                                     {:display-name "ist_dt"})]
+    [base ist-expr]))
+
+(defn- assert-now-wrapped-in-target-timezone
+  "Compile `query` and assert that every `NOW()` in the SQL is wrapped in `TIMEZONE(?, NOW())`."
+  [query]
+  (let [sql       (:query (qp.compile/compile query))
+        bare-nows (count (re-seq #"(?i)\bNOW\(\)" sql))
+        wrapped   (count (re-seq #"(?i)TIMEZONE\(\s*\?\s*,\s*NOW\(\)\s*\)" sql))]
+    (is (pos? bare-nows)
+        "sanity: the compiled SQL uses NOW() as a filter boundary")
+    (is (= bare-nows wrapped)
+        (str "Every NOW() must be wrapped in TIMEZONE(?, NOW()) so it lands in the"
+             " target timezone of the convertTimezone LHS.\nSQL:\n" sql))))
+
+(deftest ^:parallel convert-timezone-relative-datetime-filter-test
+  ;; Regression for #80155.
+  (testing "Relative-datetime filter on a convertTimezone expression compiles LHS and RHS in the same wall-clock frame"
+    (mt/test-driver :postgres
+      (mt/dataset attempted-murders
+        (let [[base ist-expr] (ist-convert-timezone-expression)]
+          (assert-now-wrapped-in-target-timezone
+           (lib/filter base (lib/time-interval ist-expr -3 :month))))))))
+
+(deftest ^:parallel convert-timezone-bucketed-lhs-filter-test
+  ;; Regression for #80155.
+  (testing "A bucketed convertTimezone LHS still compiles LHS and RHS in the same wall-clock frame"
+    (mt/test-driver :postgres
+      (mt/dataset attempted-murders
+        ;; Field bucket (week) and relative-datetime bucket (month) are incompatible, so
+        ;; `optimize-temporal-clauses` (an index-friendliness rewrite that otherwise unbuckets the LHS)
+        ;; leaves this alone.
+        (let [[base ist-expr] (ist-convert-timezone-expression)]
+          (assert-now-wrapped-in-target-timezone
+           (lib/filter base (lib/>= (lib/with-temporal-bucket ist-expr :week)
+                                    (lib/relative-datetime -2 :month)))))))))
+
+(deftest ^:parallel convert-timezone-now-filter-test
+  ;; Regression for #80155.
+  (testing "A :now filter RHS on a convertTimezone LHS compiles both sides in the same wall-clock frame"
+    (mt/test-driver :postgres
+      (mt/dataset attempted-murders
+        (let [[base ist-expr] (ist-convert-timezone-expression)]
+          (assert-now-wrapped-in-target-timezone
+           (lib/filter base (lib/< ist-expr (lib/now)))))))))
+
+(deftest ^:parallel convert-timezone-today-filter-test
+  ;; Regression for #80155.
+  (testing "A :today filter RHS on a convertTimezone LHS compiles both sides in the same wall-clock frame"
+    (mt/test-driver :postgres
+      (mt/dataset attempted-murders
+        (let [[base ist-expr] (ist-convert-timezone-expression)]
+          (assert-now-wrapped-in-target-timezone
+           (lib/filter base (lib/< ist-expr (lib/today)))))))))
+
+(deftest ^:parallel convert-timezone-wrapped-in-datetime-add-filter-test
+  ;; Regression for #80155.
+  (testing "A convertTimezone nested inside datetime-add still compiles LHS and RHS in the same wall-clock frame"
+    (mt/test-driver :postgres
+      (mt/dataset attempted-murders
+        (let [mp       (mt/metadata-provider)
+              datetime (lib.metadata/field mp (mt/id :attempts :datetime))
+              base     (-> (lib/query mp (lib.metadata/table mp (mt/id :attempts)))
+                           (lib/expression "shifted"
+                                           (lib/datetime-add
+                                            (lib/convert-timezone datetime "Asia/Kolkata" "UTC")
+                                            1 :hour)))
+              shifted  (lib.tu.notebook/find-col-with-spec base (lib/filterable-columns base)
+                                                           {} {:display-name "shifted"})]
+          (assert-now-wrapped-in-target-timezone
+           (lib/filter base (lib/time-interval shifted -3 :month))))))))
 
 (deftest postgres-ssl-connectivity-test
   (mt/test-driver :postgres
@@ -2566,3 +2724,37 @@
                     (mt/db) [(format "SELECT generate_series(1, %d) AS i" n)])]
         (testing "only the first rows are pulled, not all ~2 billion"
           (is (= [1 2 3] (into [] (comp (take 3) (map :i)) result))))))))
+
+(deftest ^:parallel value-clause-collection-guard-test
+  (testing "the :postgres [driver :value] override must not compile a collection into SQL"
+    ;; these base types build a CAST from the value itself instead of recursing through ->honeysql, so they never hit
+    ;; the guard on the base [:sql :value] method. The value slot is schema-typed `any?`, so a hand-written clause
+    ;; carries a Honey SQL form like `[{:raw "..."}]` past query validation. :redshift inherits this method.
+    (doseq [base-type     [:type/PostgresBitString :type/IPAddress :type/PostgresEnum]
+            [label value] {"map inside a vector"   [{:raw "1) UNION SELECT 1 -- "}]
+                           "sub-select in vector"  [{:select [:password] :from [:core_user]}]
+                           "honeysql op in vector" [[:raw "1) UNION SELECT 1 -- "]]
+                           "bare map"              {:raw "1) UNION SELECT 1 -- "}
+                           "a set"                 #{"a" "b"}}]
+      (testing (str base-type " -- " label)
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"\QUnexpected collection in a :value clause\E"
+             (sql.qp/->honeysql :postgres [:value {:base-type base-type, :database-type "my_enum"} value]))))))
+  (testing "ordinary literals still compile"
+    (is (= (h2x/cast :inet "1.2.3.4")
+           (sql.qp/->honeysql :postgres [:value {:base-type :type/IPAddress} "1.2.3.4"])))))
+
+(deftest ^:parallel regex-match-first-pattern-raw-guard-test
+  (testing "the :postgres [:regex-match-first] pattern must be compiled through ->honeysql, not spliced raw"
+    ;; a stored source card can carry a Honey SQL [:raw ...] form in the pattern slot past whole-query validation;
+    ;; routing it through ->honeysql makes multimethod dispatch reject it before any SQL text is produced.
+    (doseq [pattern [[:raw "'x') AS x, (SELECT string_agg(email, ',') FROM public.users"]
+                     [:raw "anything"]]]
+      (testing (pr-str pattern)
+        (is (thrown?
+             clojure.lang.ExceptionInfo
+             (sql.qp/->honeysql :postgres [:regex-match-first {} 1 pattern]))))))
+  (testing "ordinary string patterns still compile"
+    (is (= [::postgres/regex-match-first [:inline 1] "^Taylor's"]
+           (sql.qp/->honeysql :postgres [:regex-match-first {} 1 "^Taylor's"])))))

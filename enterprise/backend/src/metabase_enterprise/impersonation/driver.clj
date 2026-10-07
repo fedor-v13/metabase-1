@@ -89,7 +89,11 @@
           (let [conn-impersonation (first conn-impersonations)
                 role-attribute     (:attribute conn-impersonation)
                 user-attributes    (api/current-user-attributes)
-                role               (get user-attributes role-attribute)]
+                role               (get user-attributes role-attribute)
+                database           (if (map? database-or-id)
+                                     database-or-id
+                                     (t2/select-one :model/Database :id (u/the-id database-or-id)))
+                default-role       (driver.sql/default-database-role (driver.u/database->driver database) database)]
             (cond
               (nil? role)
               (throw (ex-info (tru "User does not have attribute required for connection impersonation.")
@@ -101,17 +105,27 @@
               (throw (ex-info (tru "Connection impersonation attribute is invalid: role must be a single non-empty string.")
                               {:user-id api/*current-user-id*
                                :conn-impersonations conn-impersonations}))
+
+              (and default-role
+                   (= (u/lower-case-en role) (u/lower-case-en default-role)))
+              (throw (ex-info (tru "Connection impersonation attribute is invalid: role must not be the database default role.")
+                              {:user-id api/*current-user-id*
+                               :conn-impersonations conn-impersonations}))
+
               :else
               role)))))))
 
 (defenterprise hash-input-for-impersonation
-  "Returns a hash-key for FieldValues if the current user uses impersonation for the database."
-  :feature :advanced-permissions
+  "Returns a hash-key for FieldValues if the current user uses impersonation for the database.
+  The role is nil while the `:advanced-permissions` feature is unavailable."
+  :feature :none
   [field]
   ;; Include the role in the hash key, so that we can cache the results of the query for each role.
   (let [db-id (field/field-id->database-id (u/the-id field))]
-    (when-let [role (and api/*current-user-id* (connection-impersonation-role db-id))]
-      {:impersonation-role role})))
+    (when-let [role (and api/*current-user-id*
+                         (t2/exists? :model/ConnectionImpersonation :db_id db-id)
+                         (connection-impersonation-role db-id))]
+      {:impersonation-role (when (premium-features/has-feature? :advanced-permissions) role)})))
 
 (def ^:dynamic *impersonation-role*
   "Set by Impersonation middleware, via the query processor, to define the role that should be used by

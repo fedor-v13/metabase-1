@@ -83,9 +83,9 @@
       true       (sql.helpers/where
                   [:or
                    [:= :search_index.model nil]
-                   [:!= :search_index.model [:inline "table"]]
+                   [:!= :search_index.model "table"]
                    [:and
-                    [:= :search_index.model [:inline "table"]]
+                    [:= :search_index.model "table"]
                     clause]]))))
 
 (defn add-collection-join-and-where-clauses
@@ -278,6 +278,7 @@
 (defmethod search.engine/reindex! :search.engine/appdb
   [_ {:keys [in-place?]}]
   (try
+    (search.index/delete-obsolete-tables!)
     (search.index/ensure-ready!)
     (if in-place?
       (when-let [table (search.index/active-table)]
