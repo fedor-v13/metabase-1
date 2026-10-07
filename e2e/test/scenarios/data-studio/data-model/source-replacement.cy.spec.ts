@@ -1075,8 +1075,12 @@ function createSourceTotalAmountMeasure() {
           name: "Total amount",
           table_id: sourceTableId,
           definition: {
-            "source-table": sourceTableId,
-            aggregation: [["sum", ["field", amountFieldId, null]]],
+            database: WRITABLE_DB_ID,
+            type: "query",
+            query: {
+              "source-table": sourceTableId,
+              aggregation: [["sum", ["field", amountFieldId, null]]],
+            },
           },
         }),
     ),
@@ -1314,7 +1318,11 @@ function buildClickBehaviorDashboard({
           },
         ],
         visualization_settings: {
-          click_behavior: crossfilterClickBehavior(CATEGORY_FILTER_ID),
+          column_settings: {
+            '["name","category"]': {
+              click_behavior: crossfilterClickBehavior(CATEGORY_FILTER_ID),
+            },
+          },
         },
       },
     });

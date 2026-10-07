@@ -5,10 +5,12 @@
    [clojure.data :as data]
    [clojure.data.csv :as csv]
    [clojure.string :as str]
+   [clojure.walk :as walk]
    [environ.core :as env]
    [malli.core :as mc]
    [medley.core :as m]
    [metabase.api.common :as api]
+   [metabase.app-db.setting :as mdb.setting]
    [metabase.config.core :as config]
    [metabase.events.core :as events]
    [metabase.models.serialization :as serdes]
@@ -266,6 +268,12 @@
   registered-settings
   (atom {}))
 
+(defonce ^:private ^{:doc "Map of `:deprecated-name` (as a string) -> the name of the setting that declares it. A row
+  stored under a name a setting used to have is still that setting's, and [[db-or-cache-value]] reads it as a
+  fallback, so it has to resolve to the setting like the current name does."}
+  settings-by-deprecated-name
+  (atom {}))
+
 (defprotocol ^:private Resolvable
   (resolve-setting [setting-definition-or-name]
     "Resolve the definition map for a Setting. `setting-definition-or-name` map be a map, keyword, or string."))
@@ -300,12 +308,13 @@
 ;; references for now
 (defmethod setting.cache/call-on-change :default
   [old new]
-  (let [rs      @registered-settings
-        [d1 d2] (data/diff old new)]
-    (doseq [changed-setting (into (set (keys d1))
-                                  (set (keys d2)))]
-      (when-let [on-change (get-in rs [(keyword changed-setting) :on-change])]
-        (on-change (core/get old changed-setting) (core/get new changed-setting))))))
+  (when (some? new)
+    (let [rs      @registered-settings
+          [d1 d2] (data/diff old new)]
+      (doseq [changed-setting (into (set (keys d1))
+                                    (set (keys d2)))]
+        (when-let [on-change (get-in rs [(keyword changed-setting) :on-change])]
+          (on-change (core/get old changed-setting) (core/get new changed-setting)))))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                      get                                                       |
@@ -342,8 +351,19 @@
     (when (allows-database-local-values? setting)
       (core/get *database-local-values* setting-name))))
 
-(defn- prohibits-encryption? [setting-or-name]
-  (= :no (:encryption (resolve-setting setting-or-name))))
+(defn- maybe-resolve-setting
+  "Like [[resolve-setting]] but returns nil for a setting with no code definition (e.g. one written straight to the DB
+  in a test) instead of throwing. A name a setting used to go by resolves to that setting."
+  [setting-or-name]
+  (try (resolve-setting setting-or-name)
+       (catch clojure.lang.ExceptionInfo e
+         (when-not (::unknown-setting-error (ex-data e))
+           (throw e))
+         (when-let [current-name (@settings-by-deprecated-name (name setting-or-name))]
+           (@registered-settings current-name)))))
+
+(defn- encrypts? [setting-or-name]
+  (not= :no (:encryption (resolve-setting setting-or-name))))
 
 (defn- allows-user-local-values? [setting]
   (#{:only :allowed} (:user-local (resolve-setting setting))))
@@ -409,10 +429,12 @@
       (nil? api/*current-user-id*)
       api/*is-superuser?*
       (and
-       ;; Non-admin setting managers can only access settings that are not marked as admin-only
+       ;; Non-admin setting managers can only access settings whose visibility is delegable to them per the
+       ;; visibility policy table in the [[defsetting]] docstring. :admin and :admin-write-authed-read settings are
+       ;; writable only by admins, and :internal settings are not writable via the API at all.
        (not api/*is-superuser?*)
        (has-advanced-setting-access?)
-       (not= (:visibility setting) :admin))
+       (contains? #{:public :authenticated :settings-manager} (:visibility setting)))
       (and
        ;; Non-admins can only access user-local settings not marked as admin-only
        (allows-user-local-values? setting)
@@ -442,26 +464,39 @@
     (or (@env-var-translation-cache sname)
         ((swap! env-var-translation-cache assoc sname (keyword (str "mb-" (munge-setting-name sname)))) sname))))
 
-(defn env-var-value
-  "Get the value of `setting-definition-or-name` from the corresponding env var, if any.
-   The name of the Setting is converted to uppercase and dashes to underscores; for example, a setting named
+(defn env-var-source
+  "Which env var supplies `setting-definition-or-name`'s value and what it holds, as `[env-var-name value]`, or nil
+  when no env var supplies one.
+
+  The name of the Setting is converted to uppercase and dashes to underscores; for example, a setting named
   `default-domain` can be set with the env var `MB_DEFAULT_DOMAIN`. Note that this strips out characters that are not
   legal for shells. Setting `foo-bar?` will expect to find the key `:mb-foo-bar` which will be sourced from the
   environment variable `MB_FOO_BAR`.
 
   When the primary env var is truly absent (nil from environ) and the setting has a `:deprecated-name`, the env var
-  derived from that name is checked as a fallback. An empty string for the primary env var means \"explicitly unset\"
-  and blocks the fallback."
-  ^String [setting-definition-or-name]
+  derived from that name is checked as a fallback, and is the one named -- so a message about the value points at
+  the variable the operator actually set. An empty string for the primary env var means \"explicitly unset\" and
+  blocks the fallback.
+
+  Prefer [[env-var-value]] unless the name is needed too."
+  [setting-definition-or-name]
   (let [setting (resolve-setting setting-definition-or-name)]
     (when (and (allows-site-wide-values? setting)
                (allows-setting-via-env? setting))
       (if-let [v (env/env (setting-env-map-name setting))]
-        ;; primary env var is set — return it only if non-empty
-        (not-empty v)
+        ;; primary env var is set — use it only if non-empty
+        (when-let [v (not-empty v)]
+          [(env-var-name setting) v])
         ;; primary env var is absent — try deprecated name
         (when-let [deprecated-name (:deprecated-name setting)]
-          (not-empty (env/env (setting-env-map-name deprecated-name))))))))
+          (when-let [v (not-empty (env/env (setting-env-map-name deprecated-name)))]
+            [(env-var-name deprecated-name) v]))))))
+
+(defn env-var-value
+  "Get the value of `setting-definition-or-name` from the corresponding env var, if any.
+  See [[env-var-source]], which this reads the value half of."
+  ^String [setting-definition-or-name]
+  (second (env-var-source setting-definition-or-name)))
 
 (defn log-deprecated-env-var-usage!
   "Log warnings for any settings currently using a deprecated env var name.
@@ -1033,7 +1068,10 @@
 
   This method will throw an exception if trying to update a read-only setting, unless `:bypass-read-only?` is set."
   [setting-definition-or-name new-value & {:keys [bypass-read-only?]}]
-  (let [{:keys [cache?] :as setting} (resolve-setting setting-definition-or-name)]
+  (let [{:keys [cache?] :as setting} (resolve-setting setting-definition-or-name)
+        new-value                    (cond-> new-value
+                                       (and (= (:type setting) :json) (coll? new-value))
+                                       walk/keywordize-keys)]
     (validate-settable! setting bypass-read-only?)
     (binding [config/*disable-setting-cache* (not cache?)]
       (set-with-audit-logging! setting new-value bypass-read-only?))))
@@ -1044,9 +1082,6 @@
   - the value you specify in `defsetting`,
 
   - ON for settings marked as `sensitive?`
-
-  - ON for settings with a setter of `:none` (the specific value here doesn't really matter, we just don't want the
-  caller to need to provide a value)
 
   - OFF for types unlikely to contain secrets. As of this writing, that's booleans, numbers, keywords, and timestamps
 
@@ -1062,10 +1097,6 @@
    ;;
    ;; if a setting is `:sensitive?`, default to encrypting it
    (when (:sensitive? setting)
-     :when-encryption-key-set)
-   ;; if a setting isn't stored in the DB, the value doesn't really matter, but provide
-   ;; a default so the caller doesn't have to
-   (when (= (:setter setting) :none)
      :when-encryption-key-set)
    ;; if the setting isn't a type likely to contain secrets, default to plaintext
    (when (contains? #{:boolean :integer :positive-integer :double :keyword :timestamp} (:type setting))
@@ -1157,6 +1188,8 @@
         (throw (ex-info (tru "Setting {0} uses :enabled-for-db?, but is not limited to only database-local values"
                              setting-name)
                         {:setting setting})))
+      (when-let [deprecated-name (:deprecated-name setting)]
+        (swap! settings-by-deprecated-name assoc (name deprecated-name) setting-name))
       (swap! registered-settings assoc setting-name <>))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -1707,57 +1740,58 @@
                  (name (:name invalid-setting))
                  (ex-message (:parse-error invalid-setting))))))
 
-(defn migrate-encrypted-settings!
-  "We have some settings that may currently be encrypted in the database that we'd like to disable encryption for.
-  This function just goes through all of them, checks to see if a value exists in the database, and re-saves it if
-  so. Toucan will handle decryption on the way out (if necessary) and the new value won't be encrypted.
+(defn- write-setting-value
+  "Store a Setting's `:value` in `:value_with_aad`, encrypted under additional authenticated data naming the setting
+  (see [[mdb.setting/setting-aad]]) whenever MB_ENCRYPTION_SECRET_KEY is set -- every setting's, whatever its
+  `:encryption` says. That flag describes the legacy `value` column, which is written here too, exactly as it was
+  before `value_with_aad` existed: nothing in this version reads it, but a version that predates the column does, and
+  keeping it current is what lets that version run alongside this one and what makes rolling back to it lossless.
 
-  Note that we're completely working around the standard getters/setters here. This should be fine in this case
-  because:
-  - we're only doing anything when a value exists in the database, and
-  - we're setting the value to the exact same value that already exists - just a decrypted version."
-  []
-  ;; If we don't have an encryption key set, don't bother trying to decrypt anything. If stuff is encrypted in the DB,
-  ;; we can't do anything about it (since we can't decrypt it). If stuff isn't decrypted in the DB, we have nothing to
-  ;; do.
-  (when (encryption/default-encryption-enabled?)
-    (let [settings (filter prohibits-encryption? (vals @registered-settings))]
-      (t2/with-transaction [_conn]
-        (doseq [{v :value k :key}
-                (t2/select :setting {:for :update :where [:and
-                                                          [:in :key (map setting-name settings)]
-                                                          ;; these are *definitely* decrypted already, let's not bother looking
-                                                          [:not [:in :value ["true" "false"]]]]})
-                :let [decrypted-v (encryption/maybe-decrypt v)]
-                :when (not= decrypted-v v)]
-          (t2/update! :setting :key k {:value decrypted-v}))))))
+  A key with no `defsetting` is refused: [[read-setting-value]] would read the row back as no value at all, so there is
+  no way to write one that means anything."
+  [setting]
+  (let [setting-key (:key setting)
+        value       (:value setting)
+        resolved    (or (maybe-resolve-setting setting-key)
+                        (throw (ex-info (tru "Unknown setting: {0}" setting-key)
+                                        {:setting-key setting-key})))]
+    (assoc setting
+           :value          (cond-> value (encrypts? resolved) encryption/maybe-encrypt)
+           :value_with_aad (some-> value (encryption/maybe-encrypt {:aad (mdb.setting/setting-aad setting-key)})))))
 
-(defn- maybe-encrypt [setting-model]
-  ;; In tests, sometimes we need to insert/update settings that don't have definitions in the code and therefore can't
-  ;; be resolved. Fall back to maybe-encrypting these.
-  ;; Don't do any automatic handling of the "encryption-check" special setting used by mdb.encryption
-  (if (= "encryption-check" (:key setting-model))
-    setting-model
-    (let [resolved (try (resolve-setting (:key setting-model))
-                        (catch clojure.lang.ExceptionInfo e
-                          (when (not (::unknown-setting-error (ex-data e)))
-                            (throw e))))]
-      (cond-> setting-model
-        (or (nil? resolved)
-            (not (prohibits-encryption? resolved)))
-        (update :value encryption/maybe-encrypt)))))
+(defn- read-setting-value
+  "Take a Setting's `:value` from the `:value_with_aad` it is stored in: decrypted under the additional authenticated
+  data naming this setting, strictly, with [[encryption/maybe-decrypt]]. With MB_ENCRYPTION_SECRET_KEY set that column
+  is ciphertext for every setting, so a plaintext value -- forged via a direct DB write, or left by a row that has never
+  been through `enable-encryption` -- is rejected rather than trusted, and so is a ciphertext moved here from another
+  setting's row, since it was authenticated under that setting's name.
+
+  Two rows read as no value at all. One with no `value_with_aad` is a row only a version predating the column has ever
+  written. One whose key has no `defsetting` -- a retired setting, one belonging to an edition this instance is not
+  running, or a row written straight to the DB in a test -- is not read at all, not even decrypted: nothing can ask
+  for such a setting by name, so there is no value to produce and no reason to touch what is stored there."
+  [setting]
+  (let [setting-key (:key setting)]
+    (if (maybe-resolve-setting setting-key)
+      (try
+        (assoc setting :value (some-> (:value_with_aad setting)
+                                      (encryption/maybe-decrypt {:aad (mdb.setting/setting-aad setting-key)})))
+        (catch Throwable e
+          (throw (ex-info (format "Error reading setting \"%s\": %s" setting-key (ex-message e))
+                          {:setting-key setting-key}
+                          e))))
+      (assoc setting :value nil))))
 
 (t2/define-before-update :model/Setting
   [setting]
-  (maybe-encrypt setting))
+  (write-setting-value setting))
 
 (t2/define-before-insert :model/Setting
   [setting]
-  (maybe-encrypt setting))
+  (write-setting-value setting))
 
 (t2/define-after-select :model/Setting
   [setting]
-  ;; Don't do any automatic handling of the "encryption-check" special setting used by mdb.encryption
-  (if (= "encryption-check" (:key setting))
-    setting
-    (update setting :value encryption/maybe-decrypt)))
+  ;; Skip aggregate results (e.g. a `count` row) that carry no `:key` to resolve the setting by.
+  (cond-> setting
+    (some? (:key setting)) read-setting-value))

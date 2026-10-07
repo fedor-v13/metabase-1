@@ -43,7 +43,11 @@
    [metabase.util :as u]
    [metabase.util.honey-sql-2 :as h2x]
    [metabase.util.log :as log]
-   [toucan2.core :as t2]))
+   [toucan2.core :as t2])
+  (:import
+   (java.io File)
+   (java.util Properties)
+   (org.mariadb.jdbc UrlParser)))
 
 (set! *warn-on-reflection* true)
 
@@ -55,6 +59,17 @@
                       ;;    tests.
                       (binding [sync-util/*log-exceptions-and-continue?* false]
                         (mt/with-test-user :rasta (thunk)))))
+
+(deftest ^:parallel like-pattern-escape-char-not-driver-inlined-test
+  (testing "LIKE's ESCAPE character compiles to a plain `'!'` even with a driver bound — a `_utf8mb4 X'21'` hex
+            literal carries utf8mb4's default collation and makes MySQL app DBs on another collation fail with
+            `Illegal mix of collations` (#81161 follow-up)"
+    (binding [driver/*driver* :mysql]
+      (is (= ["SELECT * FROM `t` WHERE LOWER(`name`) LIKE ? ESCAPE '!'" "%a!%b%"]
+             (sql/format {:select [:*]
+                          :from   [:t]
+                          :where  [:like [:lower :name] (h2x/like-substring "a%b")]}
+                         {:dialect :mysql}))))))
 
 (deftest all-zero-dates-test
   (mt/test-driver :mysql
@@ -343,7 +358,7 @@
 
 (deftest ^:parallel connection-spec-test-3
   (testing "Connections that are `:ssl false` but with `useSSL` in the additional options should be treated as SSL (see #9629)"
-    (is (=? {:useSSL true, :subname "//localhost:3306/my_db?useSSL=true&trustServerCertificate=true"}
+    (is (=? {:useSSL true, :subname "//localhost:3306/my_db?useSSL=true&trustServerCertificate=true&allowLocalInfile=false"}
             (sql-jdbc.conn/connection-details->spec :mysql
                                                     (assoc sample-connection-details
                                                            :ssl false
@@ -352,13 +367,86 @@
 (deftest ^:parallel connection-spec-test-4
   (testing "A program_name specified in additional-options is not overwritten by us"
     (let [conn-attrs "connectionAttributes=program_name:my_custom_value"]
-      (is (=? {:subname (str "//localhost:3306/my_db?" conn-attrs)
+      (is (=? {:subname (str "//localhost:3306/my_db?" conn-attrs "&allowLocalInfile=false")
                :useSSL false
                ;; because program_name was in additional-options, we shouldn't use emit :connectionAttributes
                :connectionAttributes (symbol "nil #_\"key is not present.\"")}
               (sql-jdbc.conn/connection-details->spec
                :mysql
                (assoc sample-connection-details :additional-options conn-attrs)))))))
+
+(defn- spec->allow-local-infile?
+  "Whether the MariaDB JDBC driver would let a server ask `spec`'s connection to read a file off the Metabase host.
+  Asks the driver's own URL parser rather than eyeballing the connection string, because URL parameters and connection
+  `Properties` do not carry equal weight and the last duplicate URL parameter wins."
+  [{:keys [subprotocol subname] :as spec}]
+  (let [props (Properties.)]
+    (doseq [[k v] (dissoc spec :classname :subprotocol :subname)]
+      (.setProperty props (name k) (str v)))
+    (.-allowLocalInfile (.getOptions (UrlParser/parse (str "jdbc:" subprotocol ":" subname) props)))))
+
+(deftest ^:parallel local-infile-always-disabled-test
+  (testing "connections never honor `LOAD DATA LOCAL INFILE`"
+    (are [additional-options] (false? (spec->allow-local-infile?
+                                       (sql-jdbc.conn/connection-details->spec
+                                        :mysql
+                                        (cond-> sample-connection-details
+                                          additional-options (assoc :additional-options additional-options)))))
+      nil
+      "allowLocalInfile=true"
+      "useSSL=true&allowLocalInfile=true"
+      ;; the driver lets a later duplicate win, so ours has to be appended after whatever the user wrote
+      "allowLocalInfile=false&allowLocalInfile=true")))
+
+(deftest ^:parallel validate-db-details-rejects-dangerous-additional-options-test
+  (testing "MySQL inherits the shared SQL-JDBC denylist: socketFactory et al. are rejected"
+    (doseq [opt ["socketFactory=evil.SocketFactory"
+                 "sslfactory=evil.Factory"
+                 "hostnameverifier=evil.Verifier"
+                 ;; the driver's own denylist still applies too
+                 "autoDeserialize=true"
+                 "allowLoadLocalInfile=true"]]
+      (testing opt
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo #"dangerous"
+             (driver/validate-db-details! :mysql {:additional-options opt}))))))
+  (testing "benign additional options are still allowed"
+    (doseq [opt [nil "tinyInt1isBit=false" "useSSL=true&trustServerCertificate=true"]]
+      (is (nil? (driver/validate-db-details! :mysql {:additional-options opt}))))))
+
+(deftest ^:synchronized local-infile-blocked-for-write-queries-test
+  (mt/test-driver :mysql
+    (testing "a write query cannot make the driver read a file off the Metabase host"
+      ;; Write queries — query actions, transforms — reach the database without the `-- Metabase::` remark that native
+      ;; queries carry, and that remark was the only thing keeping the driver from treating user SQL as a local-infile
+      ;; request. The connection now refuses local infile outright, so the remark no longer matters.
+      (let [spec      (sql-jdbc.conn/connection-details->spec driver/*driver* (:details (mt/db)))
+            temp-file (File/createTempFile "local-infile" ".txt")]
+        (try
+          (spit temp-file "secret-from-the-metabase-host\n")
+          (jdbc/execute! spec "DROP TABLE IF EXISTS local_infile_loot")
+          (jdbc/execute! spec "CREATE TABLE local_infile_loot (line TEXT)")
+          (qp.store/with-metadata-provider (mt/id)
+            (is (thrown? clojure.lang.ExceptionInfo
+                         (driver/execute-write-query!
+                          driver/*driver*
+                          {:type   :native
+                           :native {:query (format "LOAD DATA LOCAL INFILE '%s' INTO TABLE local_infile_loot"
+                                                   (.getAbsolutePath temp-file))}}))))
+          (is (= [] (jdbc/query spec "SELECT * FROM local_infile_loot"))
+              "nothing from the Metabase host made it into the warehouse")
+          (finally
+            (jdbc/execute! spec "DROP TABLE IF EXISTS local_infile_loot")
+            (.delete temp-file)))))))
+
+(deftest ^:parallel local-infile-enabled-for-uploads-test
+  (testing "the dedicated connection uploads bulk-load through is the one exception"
+    (is (true? (spec->allow-local-infile?
+                (#'mysql/set-local-infile
+                 (sql-jdbc.conn/connection-details->spec
+                  :mysql
+                  (assoc sample-connection-details :additional-options "allowLocalInfile=false"))
+                 true))))))
 
 (deftest read-timediffs-test
   (mt/test-driver :mysql
@@ -547,7 +635,12 @@
     (testing "Doesn't complain when field is boolean"
       (let [boolean-boop-field {:database-type "boolean" :nfc-path [:bleh "boop" :foobar 1234]}]
         (is (= ["JSON_UNQUOTE(JSON_EXTRACT(`boop`.`bleh`, ?))" "$.\"boop\".\"foobar\".\"1234\""]
-               (sql.qp/format-honeysql :mysql (sql.qp/json-query :mysql boop-identifier boolean-boop-field))))))))
+               (sql.qp/format-honeysql :mysql (sql.qp/json-query :mysql boop-identifier boolean-boop-field))))))
+    (testing "a database-type that isn't a plain type name is rejected instead of spliced raw into CONVERT"
+      (let [evil-field {:database-type "signed); select 1 --" :nfc-path [:bleh :meh]}]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                              #"Invalid database type for MySQL CONVERT"
+                              (sql.qp/json-query :mysql boop-identifier evil-field)))))))
 
 (tx/defdataset json-unquote-test
   [["json_test"
@@ -1054,6 +1147,7 @@
                                                   (driver/can-connect? :mysql details))))
           "allowLoadLocalInfile=true"
           "allowLoadLocalInfileInPath=1"
+          "allowLocalInfile=true"
           "allowUrlInLocalInfile=1"
           "autoDeserialize=1"
           "serverRSAPublicKeyFile=/path/to/file"))
@@ -1099,3 +1193,35 @@
               "query should throw rather than completing normally")
           (is (< elapsed 30000)
               (format "query should be cancelled well before SLEEP(60) completes naturally — took %.0f ms" elapsed)))))))
+
+(deftest ^:parallel add-interval-honeysql-form-rejects-hostile-unit-test
+  (testing "the MySQL interval sink refuses a unit outside its closed allow-list"
+    (let [hostile (keyword "day) FROM t2 UNION SELECT pw FROM secrets --")]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid temporal unit"
+           (sql.qp/add-interval-honeysql-form :mysql :some_col 1 hostile))))
+    (testing "and refuses a non-numeric amount, which would otherwise be spliced into raw SQL"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid interval amount"
+           (sql.qp/add-interval-honeysql-form :mysql :some_col "1 DAY) UNION SELECT pw FROM secrets --" :day))))
+    (testing "and still compiles a legitimate (possibly fractional) amount to the expected INTERVAL token"
+      (is (= ["INTERVAL 1 day"]
+             (sql/format-expr (last (sql.qp/add-interval-honeysql-form :mysql :some_col 1 :day)))))
+      (is (= ["INTERVAL 0.5 second"]
+             (sql/format-expr (last (sql.qp/add-interval-honeysql-form :mysql :some_col 0.5 :second))))))))
+
+(deftest ^:parallel date-bucketing-never-splices-database-type-test
+  (testing "MySQL date bucketing never splices a client-supplied database_type into the CAST target"
+    (let [hostile "datetime) UNION SELECT pw FROM secrets --"
+          sql     (first (sql/format {:select [[(sql.qp/date :mysql :day (h2x/with-database-type-info :some_col hostile))]]}
+                                     {:dialect :mysql :quoted true}))]
+      (is (not (str/includes? (u/lower-case-en sql) "union"))
+          "the hostile database_type does not reach the emitted SQL at all")
+      (is (= "SELECT CAST(DATE(`some_col`) AS datetime)" sql)
+          "the client type only selects a safe temporal target; it is never emitted"))
+    (testing "a legitimate temporal type still compiles to the expected CAST keyword"
+      (is (= ["SELECT CAST(DATE(`some_col`) AS datetime)"]
+             (sql/format {:select [[(sql.qp/date :mysql :day (h2x/with-database-type-info :some_col "datetime"))]]}
+                         {:dialect :mysql :quoted true}))))))

@@ -56,6 +56,17 @@
 
 (set! *warn-on-reflection* true)
 
+(deftest ^:parallel connection-hosts-test
+  (are [details expected] (= expected (driver/connection-hosts :snowflake details))
+    {:account "xy12345.us-east-2.aws"}
+    ["xy12345.us-east-2.aws.snowflakecomputing.com"]
+
+    {:account "xy12345" :use-hostname true :host "snowflake.example.com"}
+    ["snowflake.example.com"]
+
+    {:account "xy12345" :use-hostname true :host "https://snowflake.example.com:443"}
+    ["snowflake.example.com"]))
+
 (defn- query->native! [query]
   (let [check-sql-fn (fn [_ _ sql & _]
                        (throw (ex-info "done" {::native-query sql})))]
@@ -170,19 +181,20 @@
                                                                                             (assoc :host alternative-host)
                                                                                             (assoc :use-hostname use-hostname))]
                                                                             (sql-jdbc.conn/connection-details->spec :snowflake details))))
-        true nil "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"
-        true "" "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"
-        true "  " "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"
-        true "snowflake.example.com/" "//snowflake.example.com/?enablePutGet=false"
-        true "snowflake.example.com" "//snowflake.example.com/?enablePutGet=false"
-        false nil "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"
-        false "" "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"
-        false "snowflake.example.com/" "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"
-        false "snowflake.example.com" "//ls10467.us-east-2.aws.snowflakecomputing.com/?enablePutGet=false"))
+        true nil "//ls10467.us-east-2.aws.snowflakecomputing.com/"
+        true "" "//ls10467.us-east-2.aws.snowflakecomputing.com/"
+        true "  " "//ls10467.us-east-2.aws.snowflakecomputing.com/"
+        true "snowflake.example.com/" "//snowflake.example.com/"
+        true "snowflake.example.com" "//snowflake.example.com/"
+        false nil "//ls10467.us-east-2.aws.snowflakecomputing.com/"
+        false "" "//ls10467.us-east-2.aws.snowflakecomputing.com/"
+        false "snowflake.example.com/" "//ls10467.us-east-2.aws.snowflakecomputing.com/"
+        false "snowflake.example.com" "//ls10467.us-east-2.aws.snowflakecomputing.com/"))
     (testing "Unsafe options are removed"
-      (let [details (assoc details :additional-options "enablePutGet=true")
-            spec (sql-jdbc.conn/connection-details->spec :snowflake details)]
-        (is (re-find #"enablePutGet=false" (:subname spec)))))
+      (doseq [opts [nil "enablePutGet=true"]]
+        (let [spec (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :additional-options opts))]
+          (is (= "false" (:enablePutGet spec)))
+          (is (not (re-find #"(?i)enablePutGet" (str (:subname spec))))))))
     (testing "Application parameter is set to identify Metabase connections"
       (is (= "Metabase_Metabase"
              (:application (sql-jdbc.conn/connection-details->spec :snowflake details)))))))
@@ -391,8 +403,11 @@
                  [{:field-name "name" :base-type :type/Text}]
                  [["mb_qnkhuat"]]]])
     (let [{{db-name :db, :as details} :details} (mt/db)]
+      ;; TARGET_LAG = DOWNSTREAM instead of a time interval: nothing reads this table, so it never actually
+      ;; needs to refresh. With a time-based lag, a test DB that leaks (e.g. a cancelled CI job skips
+      ;; [[metabase.test.data.snowflake/after-run]]) keeps refreshing on that schedule forever.
       (jdbc/execute! (sql-jdbc.conn/connection-details->spec driver/*driver* details)
-                     [(format "CREATE OR REPLACE DYNAMIC TABLE \"%s\".\"PUBLIC\".\"metabase_fan\" target_lag = '1 minute' warehouse = 'COMPUTE_WH' AS
+                     [(format "CREATE OR REPLACE DYNAMIC TABLE \"%s\".\"PUBLIC\".\"metabase_fan\" target_lag = DOWNSTREAM warehouse = 'COMPUTE_WH' AS
                               SELECT * FROM \"%s\".\"PUBLIC\".\"metabase_users\" WHERE \"%s\".\"PUBLIC\".\"metabase_users\".\"name\" LIKE 'MB_%%';"
                               db-name db-name db-name)])
       (sync/sync-database! (t2/select-one :model/Database (mt/id)) {:scan :schema})
@@ -449,6 +464,30 @@
                                                  (lib.metadata/database (mt/metadata-provider))
                                                  {:schema-names [(:schema dynamic-table)]
                                                   :table-names  [(:name dynamic-table)]}))))))))))))
+
+(deftest ^:parallel show-dynamic-tables-sql-test
+  (testing "only the LIKE pattern escapes `_`; the IN SCHEMA identifiers stay raw (#78541)"
+    (is (= "SHOW DYNAMIC TABLES LIKE 'MY\\_TABLE' IN SCHEMA \"MY_DB\".\"RAW_DATA\";"
+           (#'driver.snowflake/show-dynamic-tables-sql "MY_DB" "RAW_DATA" "MY_TABLE")))))
+
+(deftest ^:synchronized describe-fks-dynamic-table-check-test
+  (testing "the FK path passes raw names to the dynamic table check (#78541)"
+    (let [dynamic-table-args (atom nil)
+          fk-args            (atom nil)]
+      (with-redefs [driver.snowflake/dynamic-table?
+                    (fn [_conn db-name schema table-name]
+                      (reset! dynamic-table-args [db-name schema table-name])
+                      false)
+
+                    sql-jdbc.sync/reducible-table-fks-from-jdbc-metadata
+                    (fn [_metadata db-name schema table-name]
+                      (reset! fk-args [db-name schema table-name])
+                      [])]
+        (#'driver.snowflake/reducible-table-fks-from-jdbc-metadata
+         (reify java.sql.Connection) (reify java.sql.DatabaseMetaData) "MY_DB" "RAW_DATA" "MY_TABLE"))
+      (is (= ["MY_DB" "RAW_DATA" "MY_TABLE"] @dynamic-table-args))
+      (testing "but still escapes for the JDBC metadata call, which treats them as patterns"
+        (is (= ["MY_DB" "RAW\\_DATA" "MY\\_TABLE"] @fk-args))))))
 
 (deftest ^:sequential describe-table-fields-uuid-column-test
   (mt/test-driver :snowflake
@@ -712,27 +751,28 @@
 (deftest can-change-from-password-test
   (mt/test-driver
     :snowflake
-    (let [details (:details (mt/db))
+    ;; the test DB authenticates with a private key, so give it a password to switch away from
+    (let [details (assoc (:details (mt/db)) :password "test-password" :use-password true)
           pk-key "testing"]
       (is (=?
            {:user some?
             :password some?
-            :private_key_file complement}
+            :private_key_file :hawk/key-not-present}
            (sql-jdbc.conn/connection-details->spec :snowflake details)))
       (is (=?
            {:user some?
             :password some?
-            :private_key_file complement}
+            :private_key_file :hawk/key-not-present}
            ;; Before `use-password` password took precedence over a key file
            (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :private-key-value pk-key))))
       (is (=?
            {:user some?
-            :password complement
+            :password :hawk/key-not-present
             :private_key_file some?}
            (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :password nil :private-key-value pk-key))))
       (is (=?
            {:user some?
-            :password complement
+            :password :hawk/key-not-present
             :private_key_file some?}
            (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :use-password false :private-key-value pk-key)))))))
 
@@ -1161,7 +1201,7 @@
                                           :details {:use-password false
                                                     :password "abc"}}]
         (is (= {:password "abc" :use-password true} (:details db1)))
-        (is (=? {:password "abc" :private-key-id int? :use-password complement} (:details db2)))
+        (is (=? {:password "abc" :private-key-id int? :use-password :hawk/key-not-present} (:details db2)))
         (is (= {:password "abc" :use-password false} (:details db3)))))))
 
 (deftest ^:parallel normalize-write-data-details-test
@@ -1781,3 +1821,25 @@
                           (t/zone-offset "+02:00"))              "2026-07-08 01:02:03.123456789 +0200"
       "not temporal"                                             "not temporal"
       42                                                         42)))
+
+(deftest ^:parallel add-interval-honeysql-form-rejects-hostile-unit-test
+  (testing "the Snowflake DATEADD sink refuses a unit outside its closed allow-list"
+    (let [hostile (keyword "day) FROM t2 UNION SELECT pw FROM secrets --")]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid temporal unit"
+           (sql.qp/add-interval-honeysql-form :snowflake :some_col 1 hostile))))
+    (testing "and still compiles a legitimate unit to the expected DATEADD token"
+      (is (re-find #":raw \"day\""
+                   (pr-str (sql.qp/add-interval-honeysql-form :snowflake :some_col 1 :day)))))))
+
+(deftest ^:sequential relative-datetime-cast-test
+  (mt/test-driver :snowflake
+    (testing "the server-side relative-datetime CAST target must be a bare type name -- Snowflake rejects a quoted one
+             with `Unsupported data type`"
+      (let [mp    (mt/metadata-provider)
+            query (-> (lib/query mp (lib.metadata/table mp (mt/id :orders)))
+                      (lib/filter (lib/> (lib.metadata/field mp (mt/id :orders :created_at))
+                                         (lib/relative-datetime -30 :day))))]
+        (mt/with-native-query-testing-context query
+          (is (some? (mt/rows (qp/process-query query)))))))))

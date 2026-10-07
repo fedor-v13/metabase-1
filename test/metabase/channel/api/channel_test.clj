@@ -50,6 +50,35 @@
     (is (= {:errors {:name "Channel with that name already exists"}}
            (mt/user-http-request :crowberto :post 409 "channel" default-test-channel)))))
 
+(deftest create-and-update-strip-undeclared-keys-test
+  (testing "POST /api/channel and PUT /api/channel/:id ignore undeclared keys in the top-level body:
+           a non-admin with :setting application permission can't smuggle a HoneySQL directive like :raw into the
+           update/insert payload, since the body schema is closed to a fixed key list at the top level"
+    ;; the `:setting` application permission only carries weight on an EE build with `advanced-permissions`
+    ;; enabled: `check-has-application-permission` needs both, and falls back to requiring a superuser otherwise,
+    ;; which turns the non-admin caller below away before the body schema is ever reached
+    (mt/when-ee-evailable
+     (mt/with-premium-features #{:advanced-permissions}
+       (mt/with-model-cleanup [:model/Channel]
+         (perms/grant-application-permissions! (perms/all-users-group) :setting)
+         (try
+           (let [created (mt/user-http-request :rasta :post 200 "channel"
+                                               (assoc default-test-channel
+                                                      :name "test create"
+                                                      :raw "1); insert into pwned values (1); --"
+                                                      :creator_id (mt/user->id :crowberto)))]
+             (testing "Create ignores the undeclared key"
+               (is (not (contains? created :raw)))
+               (is (not (contains? created :creator_id))))
+             (testing "Update ignores the undeclared key"
+               (let [updated (mt/user-http-request :rasta :put 200 (str "channel/" (:id created))
+                                                   {:name "test update"
+                                                    :raw  "1); insert into pwned values (1); --"})]
+                 (is (not (contains? updated :raw)))
+                 (is (= "test update" (:name updated))))))
+           (finally
+             (perms/revoke-application-permissions! (perms/all-users-group) :setting))))))))
+
 (deftest can-create-channel-with-invalid-details-test
   ;; maybe we only want this for webhook because we don't know exactly what the connection check will do
   ;; a connection check can return 400 but maybe it's ok and we rely on the fact that users know what they're doing
@@ -156,7 +185,7 @@
                                                                        :return-value {:errors {:email "Invalid email"}}}))))))
 
 (deftest test-channel-http-test
-  (mt/with-temporary-setting-values [http-channel-host-strategy :allow-all]
+  (mt/with-temp-env-var-value! [mb-http-channel-host-strategy "allow-all"]
     (channel.http-test/with-server [url [channel.http-test/post-200 channel.http-test/post-400]]
       (testing "status-code=200 endpoint"
         (is (= {:ok true}
@@ -205,7 +234,7 @@
                (:message
                 (channel-test "http://169.254.1.100/api/health" 400))))))
     (testing "allow-private strategy"
-      (mt/with-temporary-setting-values [http-channel-host-strategy :allow-private]
+      (mt/with-temp-env-var-value! [mb-http-channel-host-strategy "allow-private"]
         (testing "still blocks localhost addresses"
           (is (= "URLs referring to hosts that supply internal hosting metadata are prohibited."
                  (:message
@@ -214,7 +243,7 @@
           (is (= "URLs referring to hosts that supply internal hosting metadata are prohibited."
                  (:message
                   (channel-test "http://169.254.1.100/api/health" 400)))))))
-    (mt/with-temporary-setting-values [http-channel-host-strategy :allow-all]
+    (mt/with-temp-env-var-value! [mb-http-channel-host-strategy "allow-all"]
       (channel.http-test/with-server [url [channel.http-test/post-200 channel.http-test/post-400]]
         (testing "allow-all strategy allows localhost"
           (channel-test (str url (:path channel.http-test/post-200)) 200))))))

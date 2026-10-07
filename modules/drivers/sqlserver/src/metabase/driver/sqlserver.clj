@@ -1,6 +1,6 @@
 (ns metabase.driver.sqlserver
   "Driver for SQLServer databases. Uses the official Microsoft JDBC driver under the hood (pre-0.25.0, used jTDS)."
-  (:refer-clojure :exclude [mapv get-in])
+  (:refer-clojure :exclude [empty? mapv get-in])
   (:require
    [clojure.java.io :as io]
    [clojure.java.jdbc :as jdbc]
@@ -35,10 +35,10 @@
    [metabase.util.malli :as mu]
    [metabase.util.match :as match]
    [metabase.util.memoize :as memoize]
-   [metabase.util.performance :as perf :refer [mapv get-in]]
+   [metabase.util.performance :as perf :refer [empty? mapv get-in]]
    [next.jdbc :as next.jdbc])
   (:import
-   (java.sql Connection DatabaseMetaData PreparedStatement ResultSet Time)
+   (java.sql Connection DatabaseMetaData PreparedStatement ResultSet Time Types)
    (java.time LocalDate LocalDateTime LocalTime OffsetDateTime OffsetTime ZonedDateTime)
    (java.time.format DateTimeFormatter)
    (java.util UUID)))
@@ -46,6 +46,15 @@
 (set! *warn-on-reflection* true)
 
 (driver/register! :sqlserver, :parent #{:sql-jdbc ::like-escape-char-built-in/like-escape-char-built-in})
+
+(defmethod driver/host-carrying-parameters :sqlserver
+  [_driver]
+  ["serverName" "failoverPartner" "enclaveAttestationUrl"])
+
+(defmethod driver/non-host-parameters :sqlserver
+  [_driver]
+  ["hostNameInCertificate" "iPAddressPreference" "instanceName" "integratedSecurity" "serverCertificate"
+   "serverNameAsACE" "serverPreparedStatementDiscardThreshold" "serverSpn" "trustServerCertificate"])
 
 (doseq [[feature supported?] {:case-sensitivity-string-filter-options false
                               :connection-impersonation               true
@@ -155,6 +164,42 @@
     (keyword "decimal identity")  :type/Decimal
     (keyword "numeric identity")  :type/Decimal} column-type))
 
+(def ^:private jdbc-type->base-type
+  {Types/BIGINT                  :type/BigInteger
+   Types/BIT                     :type/Boolean
+   Types/BOOLEAN                 :type/Boolean
+   Types/CHAR                    :type/Text
+   Types/DATE                    :type/Date
+   Types/DECIMAL                 :type/Decimal
+   Types/DOUBLE                  :type/Float
+   Types/FLOAT                   :type/Float
+   Types/INTEGER                 :type/Integer
+   Types/LONGNVARCHAR            :type/Text
+   Types/LONGVARCHAR             :type/Text
+   Types/NCHAR                   :type/Text
+   Types/NUMERIC                 :type/Decimal
+   Types/NVARCHAR                :type/Text
+   Types/REAL                    :type/Float
+   Types/SMALLINT                :type/Integer
+   Types/TIME                    :type/Time
+   Types/TIME_WITH_TIMEZONE      :type/TimeWithTZ
+   Types/TIMESTAMP               :type/DateTime
+   Types/TIMESTAMP_WITH_TIMEZONE :type/DateTimeWithZoneOffset
+   Types/TINYINT                 :type/Integer
+   Types/VARCHAR                 :type/Text})
+
+(defmethod sql-jdbc.sync/describe-table-fields :sqlserver
+  [driver conn table db-name-or-nil]
+  ;; When TYPE_NAME is a user-defined type alias (`CREATE TYPE Key10 FROM varchar(10)`),
+  ;; `database-type->base-type` can't resolve it. The MSSQL JDBC driver already exposes the underlying
+  ;; base type as `DATA_TYPE` (a `java.sql.Types` code), so use it as a fallback. `:database-type` stays
+  ;; the alias name, so the original type is still visible in field metadata.
+  (into #{}
+        (map (fn [{:keys [base-type jdbc-type] :as col}]
+               (cond-> col
+                 (= base-type :type/*) (assoc :base-type (get jdbc-type->base-type jdbc-type base-type)))))
+        ((get-method sql-jdbc.sync/describe-table-fields :sql-jdbc) driver conn table db-name-or-nil)))
+
 (defmulti ^:private type->database-type
   "Internal type->database-type multimethod for SQL Server that dispatches on type."
   {:arglists '([type])}
@@ -198,22 +243,26 @@
        ;; https://social.technet.microsoft.com/Forums/sqlserver/en-US/bc1373f5-cb40-479d-9770-da1221a0bc95/connecting-to-sql-server-in-a-different-domain-using-jdbc-driver?forum=sqldataaccess
        :user               (str (when domain (str domain "\\"))
                                 user)
-       :instanceName       instance
        :encrypt            (boolean ssl)
        ;; only crazy people would want this. See https://docs.microsoft.com/en-us/sql/connect/jdbc/configuring-how-java-sql-time-values-are-sent-to-the-server?view=sql-server-ver15
        :sendTimeAsDatetime false}
       ;; only include `port` if it is specified; leave out for dynamic port: see
       ;; https://github.com/metabase/metabase/issues/7597
-      (merge (when port {:port port}))
+      ;; only include `instanceName` if supplied — mssql-jdbc treats an empty string as a named instance and
+      ;; initiates SQL Server Browser lookup, which breaks Microsoft Fabric / Synapse serverless endpoints
+      ;; that drop the connection whenever the property is present (#81270)
+      (merge (when port {:port port})
+             (when-not (str/blank? instance) {:instanceName instance}))
       (sql-jdbc.common/handle-additional-options details, :seperator-style :semicolon)))
 
 (def ^:private disallowed-additional-opts
   #"(?i)(?:socketFactoryClass|socketFactoryConstructorArg|trustManagerClass|trustManagerConstructorArg|accessTokenCallbackClass)")
 
 (defmethod driver/validate-db-details! :sqlserver
-  [_driver {:keys [host additional-options]}]
+  [_driver {:keys [host additional-options] :as details}]
   (when-let [match (some->> (str host ";" additional-options) (re-find disallowed-additional-opts))]
-    (throw (ex-info "Potentially dangerous keys in connection details" {:disallowed-key match}))))
+    (throw (ex-info "Potentially dangerous keys in connection details" {:disallowed-key match})))
+  (sql-jdbc/reject-dangerous-additional-options! details))
 
 (defmethod driver/can-connect? :sqlserver
   [driver details]
@@ -235,18 +284,30 @@
     [:inline x]
     x))
 
+(def ^:private allowed-dateparts
+  "Allow-list of the temporal units this driver emits as SQL Server `DATEPART`/`DATEADD` tokens. These are interpolated
+  through `[:raw …]`, so a unit reaching a sink here must be a member of this closed set before
+  `(name unit)` is emitted."
+  #{:year :quarter :month :dayofyear :day :week :iso_week :weekday
+    :hour :minute :second :millisecond :microsecond :nanosecond})
+
+(defn- datepart-token [unit]
+  (when-not (contains? allowed-dateparts unit)
+    (throw (ex-info (str "Invalid temporal unit: " (pr-str unit)) {:unit unit})))
+  (name unit))
+
 ;; See https://docs.microsoft.com/en-us/sql/t-sql/functions/datepart-transact-sql?view=sql-server-ver15
 (defn- date-part [unit expr]
-  (-> [:datepart [:raw (name unit)] expr]
+  (-> [:datepart [:raw (datepart-token unit)] expr]
       (h2x/with-database-type-info "integer")))
 
 (defn- date-add [unit & exprs]
-  (into [:dateadd [:raw (name unit)]]
+  (into [:dateadd [:raw (datepart-token unit)]]
         (map maybe-inline-number)
         exprs))
 
 (defn- date-diff [unit x y]
-  [:datediff_big [:raw (name unit)] x y])
+  [:datediff_big [:raw (datepart-token unit)] x y])
 
 ;; See https://docs.microsoft.com/en-us/sql/t-sql/functions/date-and-time-data-types-and-functions-transact-sql for
 ;; details on the functions we're using.
@@ -531,6 +592,44 @@
 (defmethod sql.qp/datetime-diff [:sqlserver :minute] [_driver _unit x y] (date-diff :minute x y))
 (defmethod sql.qp/datetime-diff [:sqlserver :second] [_driver _unit x y] (date-diff :second x y))
 
+(defn- comparison-lhs-datetimeoffset?
+  "True when [[sql.qp/*parent-honeysql-col-type-info*]] indicates the LHS of the enclosing comparison is a
+  `datetimeoffset` column."
+  [parent-info]
+  (or (= "datetimeoffset" (:database-type parent-info))
+      (isa? (:effective-type parent-info) :type/DateTimeWithZoneOffset)
+      (isa? (:base-type parent-info) :type/DateTimeWithZoneOffset)))
+
+(defn- maybe-attach-report-timezone
+  "Wrap `rhs` in `AT TIME ZONE '<report-tz-windows-name>'` when:
+
+    - the LHS of the enclosing comparison is a `datetimeoffset` column,
+    - a report timezone is configured, and
+    - `rhs` is a naive `datetime`/`datetime2` (nothing to preserve).
+
+  Otherwise return `rhs` unchanged. This restores the report-timezone offset that date bucketing drops.
+  Without it, SQL Server implicitly treats a naive `datetime2` as offset +00:00 when comparing against
+  `datetimeoffset`, shifting the filter window by the report tz offset (#78612)."
+  [rhs]
+  (let [report-windows-tz (some-> (driver-api/requested-timezone-id) zone-id->windows-zone)
+        rhs-naive?        (contains? #{"datetime" "datetime2"}
+                                     (h2x/type-info->db-type (h2x/type-info rhs)))]
+    (cond-> rhs
+      (and report-windows-tz
+           rhs-naive?
+           (comparison-lhs-datetimeoffset? sql.qp/*parent-honeysql-col-type-info*))
+      (h2x/at-time-zone report-windows-tz))))
+
+(defmethod sql.qp/->honeysql [:sqlserver :relative-datetime]
+  [driver clause]
+  (maybe-attach-report-timezone
+   ((get-method sql.qp/->honeysql [:sql :relative-datetime]) driver clause)))
+
+(defmethod sql.qp/->honeysql [:sqlserver :absolute-datetime]
+  [driver clause]
+  (maybe-attach-report-timezone
+   ((get-method sql.qp/->honeysql [:sql :absolute-datetime]) driver clause)))
+
 (defmethod sql.qp/cast-temporal-string [:sqlserver :Coercion/ISO8601->DateTime]
   [_driver _semantic_type expr]
   (h2x/->datetime expr))
@@ -560,9 +659,13 @@
 
 (defmethod sql.qp/apply-top-level-clause [:sqlserver :page]
   [_driver _top-level-clause honeysql-form {{:keys [items page]} :page}]
-  (assoc honeysql-form :offset [:raw (format "%d ROWS FETCH NEXT %d ROWS ONLY"
-                                             (* items (dec page))
-                                             items)]))
+  (-> honeysql-form
+      ;; SQL Server rejects OFFSET/FETCH without an ORDER BY (#81988). Supply a placeholder when the
+      ;; caller didn't provide one; the row order is unspecified either way.
+      (cond-> (empty? (:order-by honeysql-form))
+        (assoc :order-by [[{:select [nil]}]]))
+      (assoc :offset (sql.qp/inline-num (* items (dec page)))
+             :fetch  (sql.qp/inline-num items))))
 
 (defn- optimized-temporal-buckets
   "If `field-clause` is being truncated temporally to `:year`, `:month`, or `:day`, return a optimized set of
@@ -681,10 +784,12 @@
          (parent-method driver :filter honeysql-form))))
 
 ;; SQL Server doesn't like backslashes as the escape character for `LIKE` clauses. Use character classes instead to
-;; escape the `LIKE` metacharacters `%` and `_`.
+;; escape the `LIKE` metacharacters `[`, `%`, and `_`. `[` opens a character class, so it must be escaped first --
+;; the replacements below introduce `[` characters of their own that must not be re-escaped.
 (defmethod sql.qp/escape-like-pattern :sqlserver
   [_driver like-pattern]
   (-> like-pattern
+      (str/replace "["  "[[]")
       (str/replace "\\" "[\\]")
       (str/replace "%"  "[%]")
       (str/replace "_"  "[_]")))
@@ -967,6 +1072,13 @@
         (.close stmt)
         (throw e)))))
 
+(defmethod sql-jdbc.execute/cancelation-poisons-connection? :sqlserver
+  [_driver]
+  ;; `.cancel` sends an out-of-band TDS attention packet. Its acknowledgement is not drained before the Connection is
+  ;; checked back into the pool, and it surfaces later as `The result set is closed.` while an unrelated query is
+  ;; reading rows on the recycled Connection.
+  true)
+
 (defmethod sql.qp/inline-value [:sqlserver LocalDate]
   [_ ^LocalDate t]
   ;; datefromparts(year, month, day)
@@ -1141,9 +1253,11 @@
 
 (defmethod driver/create-schema-if-needed! :sqlserver
   [driver conn-spec schema]
+  ;; The quoted identifier is spliced inside the single-quoted EXEC('…') literal, so it must also be
+  ;; single-quote-escaped.
   (let [sql [[(format "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = '%s') EXEC('CREATE SCHEMA %s;');"
                       (sql.u/escape-sql schema :ansi)
-                      (quote-schema schema))]]]
+                      (sql.u/escape-sql (quote-schema schema) :ansi))]]]
     (driver/execute-raw-queries! driver conn-spec sql)))
 
 (defmethod driver/rename-table! :sqlserver
@@ -1260,10 +1374,6 @@
 
 (defmethod driver/llm-sql-dialect-resource :sqlserver [_]
   "metabot/prompts/dialects/sqlserver.md")
-
-(defmethod driver/validate-impersonated-query :sqlserver
-  [driver query]
-  (driver.sql/validate-impersonated-query* driver query))
 
 (defmethod sql-jdbc.sync/current-user-table-privileges :sqlserver
   [_driver conn-spec & {:as _options}]

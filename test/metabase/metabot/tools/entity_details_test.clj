@@ -1,12 +1,19 @@
 (ns metabase.metabot.tools.entity-details-test
   {:clj-kondo/config '{:linters {:deprecated-var {:exclude {metabase.test.data/mbql-query {:namespaces [metabase.metabot.tools.entity-details-test]}}}}}}
   (:require
+   [clojure.string :as str]
    [clojure.test :refer :all]
+   [metabase.lib-be.core :as lib-be]
    [metabase.lib.core :as lib]
    [metabase.lib.metadata :as lib.metadata]
+   [metabase.metabot.metadata-perms :as metabot.perms]
    [metabase.metabot.tools.entity-details :as entity-details]
+   [metabase.parameters.field-values :as params.field-values]
+   [metabase.permissions.core :as perms]
+   [metabase.permissions.models.permissions-group :as perms-group]
    [metabase.test :as mt]
    [metabase.test.fixtures :as fixtures]
+   [metabase.warehouse-schema.models.field-values :as field-values]
    [toucan2.core :as t2]))
 
 (use-fixtures :once (fixtures/initialize :db :test-users))
@@ -395,6 +402,32 @@
                 (is (= segment-id (:id segment)))
                 (is (= "Large Orders" (:name segment)))))))))))
 
+(deftest get-field-values-has-stable-shape-test
+  (let [field-id   (mt/id :categories :name)
+        raw-values ["African" "American"]]
+    (testing "cache hits return raw values"
+      (is (= raw-values
+             (#'entity-details/get-field-values {field-id {:values raw-values}} field-id))))))
+
+(deftest table-details-read-cached-field-values-in-one-query-test
+  (testing "table details read the cached values of unrestricted columns in one query, not one per column"
+    (mt/with-temp-copy-of-db
+      (mt/with-current-user (mt/user->id :rasta)
+        (let [field-ids   (t2/select-pks-set :model/Field :table_id (mt/id :venues))
+              details     #(:structured-output
+                            (entity-details/get-table-details {:entity-type :table, :entity-id (mt/id :venues)}))
+              query-count (fn [field-ids-with-values]
+                            (with-redefs [field-values/field-should-have-field-values?
+                                          #(contains? field-ids-with-values (:id %))]
+                              ;; creates the FieldValues and warms the memoized field and table lookups
+                              (is (= field-ids-with-values
+                                     (set (keep #(when (:field_values %) (:field_id %)) (:fields (details))))))
+                              (t2/with-call-count [call-count]
+                                (details)
+                                (call-count))))]
+          (is (= (query-count #{(first field-ids)})
+                 (query-count field-ids))))))))
+
 ;;; ============================================================
 ;;; Base-table surfacing on get-metric-details (regression)
 ;;; ============================================================
@@ -425,6 +458,79 @@
             (is (= [db-name (:schema orders) (:name orders)]
                    (:base_table_portable_fk output))
                 "portable FK should be `[database_name, schema, table_name]`")))))))
+
+(deftest get-metric-details-hides-unreadable-base-table-test
+  (testing "metric details do not reveal metadata for a base table the user cannot read"
+    (let [mp (mt/metadata-provider)
+          metric-query (-> (lib/query mp (lib.metadata/table mp (mt/id :orders)))
+                           (lib/aggregate (lib/sum (lib.metadata/field mp (mt/id :orders :total)))))]
+      (mt/with-temp [:model/Card {metric-id :id} {:dataset_query metric-query
+                                                  :database_id   (mt/id)
+                                                  :name          "Restricted base-table metric"
+                                                  :type          :metric}]
+        (mt/with-no-data-perms-for-all-users!
+          (mt/with-current-user (mt/user->id :rasta)
+            (with-redefs [params.field-values/get-or-create-field-values-by-field-id!
+                          (fn [_]
+                            (throw (ex-info "field values must not be fetched" {})))]
+              (let [output (:structured-output
+                            (entity-details/get-metric-details {:metric-id     metric-id
+                                                                :with-segments? true}))]
+                (is (= metric-id (:id output)) "collection access still makes the metric readable")
+                (is (not-any? #(contains? output %)
+                              [:base_table_id
+                               :base_table_name
+                               :base_table_portable_fk
+                               :default_time_dimension_field_id
+                               :queryable-dimensions
+                               :segments]))))))))))
+
+(deftest get-metric-details-hides-unreadable-fk-target-test
+  (testing "metric dimensions do not reveal metadata for an unreadable FK target table"
+    (mt/with-temp [:model/Database db         {}
+                   :model/Table    target     {:db_id              (:id db)
+                                               :name               "secret_table"
+                                               :schema             "private"}
+                   :model/Field    target-id  {:table_id           (:id target)
+                                               :name               "secret_id"
+                                               :database_type      "INTEGER"
+                                               :base_type          :type/Integer}
+                   :model/Table    source     {:db_id              (:id db)
+                                               :name               "orders"
+                                               :schema             "public"}
+                   :model/Field    _source-id {:table_id           (:id source)
+                                               :name               "id"
+                                               :database_type      "INTEGER"
+                                               :base_type          :type/Integer}
+                   :model/Field    _source-fk {:table_id           (:id source)
+                                               :name               "user_id"
+                                               :database_type      "INTEGER"
+                                               :base_type          :type/Integer
+                                               :semantic_type      :type/FK
+                                               :fk_target_field_id (:id target-id)}]
+      (let [mp           (lib-be/application-database-metadata-provider (:id db))
+            metric-query (-> (lib/query mp (lib.metadata/table mp (:id source)))
+                             (lib/aggregate (lib/count)))]
+        (mt/with-temp [:model/Card {metric-id :id} {:dataset_query metric-query
+                                                    :database_id   (:id db)
+                                                    :table_id      (:id source)
+                                                    :name          "Readable source metric"
+                                                    :type          :metric}]
+          (mt/with-no-data-perms-for-all-users!
+            (perms/set-database-permission! (perms-group/all-users) db :perms/view-data :unrestricted)
+            (perms/set-table-permission! (perms-group/all-users) source
+                                         :perms/create-queries :query-builder-and-native)
+            (mt/with-current-user (mt/user->id :rasta)
+              (let [output     (:structured-output
+                                (entity-details/get-metric-details {:metric-id          metric-id
+                                                                    :with-field-values? false}))
+                    dimensions (:queryable-dimensions output)
+                    source-fk  (some #(when (= "user_id" (:name %)) %) dimensions)]
+                (is (= "orders" (:base_table_name output)))
+                (is (some? source-fk) "the readable source FK column is returned")
+                (is (not (contains? source-fk :fk_target_portable_fk)))
+                (is (not (str/includes? (pr-str output) "secret_table")))
+                (is (not (str/includes? (pr-str output) "secret_id")))))))))))
 
 ;;; ============================================================
 ;;; Portable entity_id in card details (step 11.2)
@@ -560,6 +666,21 @@
                 (is (=? {:id card-id :type :question} output))
                 (is (not (contains? output :metrics)))
                 (is (= 0 @calls))))))))))
+
+(deftest answer-sources-omits-models-with-no-visible-fields-test
+  (testing "a model built on a table the user has no view-data permission on is omitted entirely from
+            list_available_data_sources, rather than listed with :fields []"
+    (mt/with-temp [:model/Card    {model-id :id} {:dataset_query (mt/mbql-query orders)
+                                                  :type          :model
+                                                  :collection_id nil}
+                   :model/Metabot metabot {:name          "root metabot"
+                                           :collection_id nil
+                                           :use_verified_content false}]
+      (mt/with-no-data-perms-for-all-users!
+        (mt/with-current-user (mt/user->id :rasta)
+          (let [{:keys [structured-output]} (entity-details/answer-sources
+                                             {:metabot-id (:entity_id metabot)})]
+            (is (not (contains? (set (map :id (:models structured-output))) model-id)))))))))
 
 (deftest related-tables-with-fields-capped-test
   (testing (str "FK-related-table *column* expansion is capped at `max-related-tables-with-fields` so a table "
@@ -710,3 +831,93 @@
             (is (=? #{{:id products :related_by {:id (mt/id :orders :product_id) :name "PRODUCT_ID"}}
                       {:id products :related_by {:id (mt/id :reviews :product_id) :name "PRODUCT_ID"}}}
                     (into #{} (map #(select-keys % [:id :related_by])) product-rows)))))))))
+
+(deftest related-tables-omit-blocked-fk-targets-test
+  (testing "a table the user is Blocked from is neither surfaced as a related table nor named as an FK
+            target, even when the user manages that table's metadata"
+    (mt/test-driver :h2
+      (mt/with-no-data-perms-for-all-users!
+        (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
+        (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/create-queries :query-builder)
+        (perms/set-table-permission! (perms-group/all-users) (mt/id :people) :perms/view-data :blocked)
+        (perms/set-table-permission! (perms-group/all-users) (mt/id :people) :perms/manage-table-metadata :yes)
+        (mt/with-current-user (mt/user->id :rasta)
+          (let [output  (:structured-output
+                         (entity-details/get-table-details {:entity-type        :table
+                                                            :entity-id          (mt/id :orders)
+                                                            :with-field-values? false}))
+                related (:related_tables output)
+                user-id (some #(when (= "USER_ID" (:name %)) %) (:fields output))]
+            (testing "the readable FK neighbour is still expanded"
+              (is (some #(= (mt/id :products) (:id %)) related)))
+            (testing "the blocked FK neighbour is absent"
+              (is (not-any? #(= (mt/id :people) (:id %)) related)))
+            (testing "the FK column itself is retained but no longer names its target"
+              (is (some? user-id))
+              (is (not (contains? user-id :fk_target_portable_fk))))
+            (testing "no People column or table name appears anywhere in the payload"
+              (is (not (str/includes? (pr-str output) "PEOPLE"))))))))))
+
+(deftest related-tables-include-readable-fk-targets-test
+  (testing "control: with view-data on every table, both FK neighbours are expanded and FK targets are named"
+    (mt/test-driver :h2
+      (mt/with-no-data-perms-for-all-users!
+        (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
+        (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/create-queries :query-builder)
+        (mt/with-current-user (mt/user->id :rasta)
+          (let [output  (:structured-output
+                         (entity-details/get-table-details {:entity-type        :table
+                                                            :entity-id          (mt/id :orders)
+                                                            :with-field-values? false}))
+                related (:related_tables output)
+                user-id (some #(when (= "USER_ID" (:name %)) %) (:fields output))]
+            (is (some #(= (mt/id :products) (:id %)) related))
+            (is (some #(= (mt/id :people) (:id %)) related))
+            (is (contains? user-id :fk_target_portable_fk))))))))
+
+(deftest related-tables-permission-checks-are-memoized-test
+  (testing "the entity-details entry point binds the permission memo itself, so an outer agent-turn memo
+            does not change its app-DB reads or output"
+    (mt/test-driver :h2
+      (mt/with-no-data-perms-for-all-users!
+        (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
+        (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/create-queries :query-builder)
+        (mt/with-current-user (mt/user->id :rasta)
+          (let [details  #(entity-details/get-table-details {:entity-type        :table
+                                                             :entity-id          (mt/id :orders)
+                                                             :with-field-values? false})
+                ;; Warm whatever else the first call populates, so the two measurements differ only in
+                ;; whether the memo is bound.
+                _        (details)
+                uncached (t2/with-call-count [calls] (details) (calls))
+                cached   (metabot.perms/with-cache
+                           (t2/with-call-count [calls] (details) (calls)))]
+            (is (= cached uncached)
+                (format "expected the entry point's own memo to make the outer binding redundant (cached %d, uncached %d)"
+                        cached uncached))
+            (testing "and the output is unchanged"
+              (is (= (:structured-output (metabot.perms/with-cache (details)))
+                     (:structured-output (details)))))))))))
+
+(deftest get-dashboard-details-rejects-non-integer-id-test
+  (testing (str "a non-integer dashboard-id reaches t2/select-one's queryable position and would run as "
+                "raw SQL on the app DB. get-dashboard-details must reject it before any query, the same way "
+                "get-report-details/get-metric-details do.")
+    (doseq [[label bad-id] {"a raw SQL string"      "SELECT 1 AS id; DROP TABLE t; --"
+                            "a {:raw ...} map"       {:raw "1); DROP TABLE t; --"}
+                            "a honeysql-ish vector"  [:raw "1=1"]
+                            "nil"                    nil}]
+      (testing label
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"Invalid dashboard_id format"
+             (entity-details/get-dashboard-details {:dashboard-id bad-id}))
+            "the guard throws before the value can reach the app DB")
+        (try
+          (entity-details/get-dashboard-details {:dashboard-id bad-id})
+          (catch clojure.lang.ExceptionInfo e
+            (is (= 400 (:status-code (ex-data e))))
+            (is (:agent-error? (ex-data e))))))))
+  (testing "an integer id still passes the guard and resolves normally"
+    (is (= {:output "dashboard not found"}
+           (entity-details/get-dashboard-details {:dashboard-id Integer/MAX_VALUE})))))

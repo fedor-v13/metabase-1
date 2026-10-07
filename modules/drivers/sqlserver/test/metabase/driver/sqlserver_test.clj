@@ -2,6 +2,7 @@
   {:clj-kondo/config '{:linters {:deprecated-var {:exclude {metabase.test.data/mbql-query {:namespaces [metabase.driver.sqlserver-test]}
                                                             metabase.test.data/run-mbql-query {:namespaces [metabase.driver.sqlserver-test]}}}}}}
   (:require
+   [clojure.java.jdbc :as jdbc]
    [clojure.string :as str]
    [clojure.test :refer :all]
    [colorize.core :as colorize]
@@ -27,7 +28,9 @@
    [metabase.query-processor.test :as qp]
    [metabase.query-processor.test-util :as qp.test-util]
    [metabase.query-processor.timezone :as qp.timezone]
+   [metabase.sync.core :as sync]
    [metabase.test :as mt]
+   [metabase.test.data.interface :as tx]
    [metabase.test.util.timezone :as test.tz]
    [metabase.util :as u]
    [metabase.util.date-2 :as u.date]
@@ -44,6 +47,75 @@
     (let [expr (h2x/with-type-info :test_col {:effective-type :type/Time})]
       (is (= ["TIMEFROMPARTS(DATEPART(hour, \"test_col\"), 0, 0, 0, 0)"]
              (sql.qp/format-honeysql :sqlserver (sql.qp/date :sqlserver :hour expr)))))))
+
+(deftest relative-datetime-against-datetimeoffset-uses-report-timezone-test
+  (testing (str "When a `:relative-datetime` filter value is compared against a `datetimeoffset` column, the value "
+                "must be tagged with the report timezone. Otherwise SQL Server implicitly treats the naive "
+                "`datetime2` result as offset +00:00 during the comparison, shifting the filter window by the "
+                "report tz offset (#78612).")
+    (driver/with-driver :sqlserver
+      (qp.test-util/with-report-timezone-id! "Pacific/Auckland"
+        (let [today    [:relative-datetime 0 :day]
+              tomorrow [:relative-datetime 1 :day]]
+          (testing "datetimeoffset LHS: RHS is wrapped in AT TIME ZONE '<report-tz-windows-name>'"
+            (binding [sql.qp/*parent-honeysql-col-type-info* {:database-type  "datetimeoffset"
+                                                              :effective-type :type/DateTimeWithZoneOffset}]
+              (is (= [(str "(CAST(DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), DAY(GETDATE())) AS datetime2)"
+                           " AT TIME ZONE 'New Zealand Standard Time')")]
+                     (sql.qp/format-honeysql :sqlserver (sql.qp/->honeysql :sqlserver today))))
+              (is (= [(str "(CAST(DATEFROMPARTS(YEAR(DATEADD(day, 1, GETDATE())),"
+                           " MONTH(DATEADD(day, 1, GETDATE())),"
+                           " DAY(DATEADD(day, 1, GETDATE()))) AS datetime2)"
+                           " AT TIME ZONE 'New Zealand Standard Time')")]
+                     (sql.qp/format-honeysql :sqlserver (sql.qp/->honeysql :sqlserver tomorrow))))))
+          (testing "plain datetime2 LHS: RHS is unchanged (no AT TIME ZONE wrap)"
+            (binding [sql.qp/*parent-honeysql-col-type-info* {:database-type  "datetime2"
+                                                              :effective-type :type/DateTime}]
+              (is (= ["CAST(DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), DAY(GETDATE())) AS datetime2)"]
+                     (sql.qp/format-honeysql :sqlserver (sql.qp/->honeysql :sqlserver today))))))))
+      (testing "with no report timezone set, RHS is unchanged even for a datetimeoffset LHS (nothing to attach)"
+        (qp.test-util/with-report-timezone-id! nil
+          (binding [sql.qp/*parent-honeysql-col-type-info* {:database-type  "datetimeoffset"
+                                                            :effective-type :type/DateTimeWithZoneOffset}]
+            (is (= ["CAST(DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), DAY(GETDATE())) AS datetime2)"]
+                   (sql.qp/format-honeysql
+                    :sqlserver
+                    (sql.qp/->honeysql :sqlserver
+                                       [:relative-datetime 0 :day]))))))))))
+
+(deftest absolute-datetime-against-datetimeoffset-uses-report-timezone-test
+  (testing (str "`:absolute-datetime` filter values compared against a `datetimeoffset` column suffer the same "
+                "class of bug as `:relative-datetime` (#78612): a naive `datetime2` RHS is silently treated as "
+                "offset +00:00 during the comparison. Attach the report timezone to the naive literal.")
+    (driver/with-driver :sqlserver
+      (let [today [:absolute-datetime (t/local-date 2026 8 2) :day]]
+        (qp.test-util/with-report-timezone-id! "Pacific/Auckland"
+          (testing "datetimeoffset LHS: RHS is wrapped in AT TIME ZONE '<report-tz-windows-name>'"
+            (binding [sql.qp/*parent-honeysql-col-type-info* {:database-type  "datetimeoffset"
+                                                              :effective-type :type/DateTimeWithZoneOffset}]
+              (is (= [(str "(CAST(DATEFROMPARTS(YEAR(?), MONTH(?), DAY(?)) AS datetime2)"
+                           " AT TIME ZONE 'New Zealand Standard Time')")
+                      (t/local-date 2026 8 2)
+                      (t/local-date 2026 8 2)
+                      (t/local-date 2026 8 2)]
+                     (sql.qp/format-honeysql :sqlserver (sql.qp/->honeysql :sqlserver today))))))
+          (testing "plain datetime2 LHS: RHS is unchanged (no AT TIME ZONE wrap)"
+            (binding [sql.qp/*parent-honeysql-col-type-info* {:database-type  "datetime2"
+                                                              :effective-type :type/DateTime}]
+              (is (= ["CAST(DATEFROMPARTS(YEAR(?), MONTH(?), DAY(?)) AS datetime2)"
+                      (t/local-date 2026 8 2)
+                      (t/local-date 2026 8 2)
+                      (t/local-date 2026 8 2)]
+                     (sql.qp/format-honeysql :sqlserver (sql.qp/->honeysql :sqlserver today)))))))
+        (testing "with no report timezone set, RHS is unchanged even for a datetimeoffset LHS (nothing to attach)"
+          (qp.test-util/with-report-timezone-id! nil
+            (binding [sql.qp/*parent-honeysql-col-type-info* {:database-type  "datetimeoffset"
+                                                              :effective-type :type/DateTimeWithZoneOffset}]
+              (is (= ["CAST(DATEFROMPARTS(YEAR(?), MONTH(?), DAY(?)) AS datetime2)"
+                      (t/local-date 2026 8 2)
+                      (t/local-date 2026 8 2)
+                      (t/local-date 2026 8 2)]
+                     (sql.qp/format-honeysql :sqlserver (sql.qp/->honeysql :sqlserver today)))))))))))
 
 (deftest ^:parallel fix-order-bys-test
   (testing "Remove order-by from joins"
@@ -116,7 +188,6 @@
                                  config/local-process-uuid)
             :database           "birddb"
             :encrypt            false
-            :instanceName       nil
             :loginTimeout       10
             :password           "toucans"
             :port               1433
@@ -130,7 +201,19 @@
                                                     :db                 "birddb"
                                                     :host               "localhost"
                                                     :port               1433
-                                                    :additional-options "trustServerCertificate=false"})))))
+                                                    :additional-options "trustServerCertificate=false"}))))
+  (testing "instanceName is omitted when no instance is supplied — mssql-jdbc treats an empty string as a named instance, which breaks Microsoft Fabric and Synapse serverless endpoints (#81270)"
+    (doseq [instance [nil "" "   "]]
+      (testing (pr-str instance)
+        (is (not (contains? (sql-jdbc.conn/connection-details->spec :sqlserver
+                                                                    {:user "cam", :password "toucans", :db "birddb",
+                                                                     :host "localhost", :port 1433, :instance instance})
+                            :instanceName))))))
+  (testing "instanceName is passed through when the user supplies one"
+    (is (= "MYINSTANCE"
+           (:instanceName (sql-jdbc.conn/connection-details->spec :sqlserver
+                                                                  {:user "cam", :password "toucans", :db "birddb",
+                                                                   :host "localhost", :instance "MYINSTANCE"}))))))
 
 (deftest ^:parallel reject-details-with-dangerous-additional-options-test
   (mt/test-driver :sqlserver
@@ -162,6 +245,24 @@
           " "
           "trustServerCertificate=false"
           "trustStore=/path/to/store;trustStorePassword=password;trustStoreType=pkcs12")))))
+
+(deftest ^:parallel validate-db-details-inherits-shared-denylist-test
+  (testing "SQL Server also inherits the shared SQL-JDBC denylist, not just its own keys"
+    (doseq [opt ["socketFactory=evil.Factory"   ; shared list, distinct from sqlserver's socketFactoryClass
+                 "sslfactory=evil.Factory"
+                 "dnsResolver=evil.Resolver"
+                 "queryInterceptors=evil.Interceptor"]]
+      (testing opt
+        (is (thrown-with-msg?
+             java.lang.Exception #"[Dd]angerous keys"
+             (driver/validate-db-details! :sqlserver {:additional-options opt}))))))
+  (testing "sqlserver's own denylist keys are still rejected"
+    (doseq [opt ["socketFactoryClass=evil.Factory"
+                 "accessTokenCallbackClass=evil.Callback"]]
+      (testing opt
+        (is (thrown-with-msg?
+             java.lang.Exception #"[Dd]angerous keys"
+             (driver/validate-db-details! :sqlserver {:additional-options opt})))))))
 
 (deftest ^:parallel add-max-results-limit-test
   (mt/test-driver :sqlserver
@@ -257,6 +358,29 @@
                                  :order-by     [[:asc $id]]
                                  :limit        5}
                   :limit        3}))))))))
+
+(deftest ^:parallel page-adds-order-by-when-none-present-test
+  (testing "Regression for #81988."
+    (testing "no existing ORDER BY -> synthetic ORDER BY (SELECT NULL) added"
+      (is (= {:order-by [[{:select [nil]}]]
+              :offset   [:inline 0]
+              :fetch    [:inline 200]}
+             (sql.qp/apply-top-level-clause :sqlserver :page {}
+                                            {:page {:page 1 :items 200}}))))
+    (testing "existing ORDER BY preserved"
+      (let [existing-order-by [[[:field "id" nil] :asc]]]
+        (is (= {:order-by existing-order-by
+                :offset   [:inline 0]
+                :fetch    [:inline 200]}
+               (sql.qp/apply-top-level-clause :sqlserver :page
+                                              {:order-by existing-order-by}
+                                              {:page {:page 1 :items 200}})))))
+    (testing "later pages compute OFFSET from (page - 1) * items"
+      (is (= {:order-by [[{:select [nil]}]]
+              :offset   [:inline 400]
+              :fetch    [:inline 200]}
+             (sql.qp/apply-top-level-clause :sqlserver :page {}
+                                            {:page {:page 3 :items 200}}))))))
 
 (deftest ^:parallel locale-bucketing-test
   (mt/test-driver :sqlserver
@@ -895,6 +1019,39 @@
         (is (= :type/BigInteger
                (t2/select-one-fn :base_type :model/Field (mt/id :bigint_identity_test :id))))))))
 
+(def ^:private udt-alias-db-details
+  (delay (mt/dbdef->connection-details :sqlserver :db {:database-name "udt_alias_test"})))
+
+(def ^:private udt-alias-db-ddl
+  ["CREATE TYPE dbo.Key10 FROM varchar(10);"
+   "CREATE TYPE dbo.Importe FROM numeric(19,2);"
+   (str "CREATE TABLE dbo.udt_alias_test ("
+        "  id int NOT NULL PRIMARY KEY,"
+        "  customer dbo.Key10 NOT NULL,"
+        "  amount   dbo.Importe NULL,"
+        "  plain    varchar(10) NULL);")])
+
+(defn- create-udt-alias-db! []
+  (tx/drop-if-exists-and-create-db! :sqlserver "udt_alias_test")
+  (let [spec (sql-jdbc.conn/connection-details->spec :sqlserver @udt-alias-db-details)]
+    (doseq [stmt udt-alias-db-ddl]
+      (jdbc/execute! spec [stmt] {:transaction? false}))))
+
+(deftest user-defined-type-alias-sync-test
+  (testing "UDT aliases (like `CREATE TYPE Key10 FROM varchar(10)`) sync to their underlying base type (#62335)"
+    (mt/test-driver :sqlserver
+      (create-udt-alias-db!)
+      (mt/with-temp [:model/Database database {:engine :sqlserver, :details @udt-alias-db-details}]
+        (sync/sync-database! database)
+        (let [table-id (t2/select-one-pk :model/Table :db_id (:id database) :name "udt_alias_test")
+              fields   (into {} (map (juxt :name identity))
+                             (t2/select :model/Field :table_id table-id))]
+          (is (=? {:database_type "Key10"   :base_type :type/Text}    (get fields "customer")))
+          (is (=? {:database_type "Importe" :base_type :type/Decimal} (get fields "amount")))
+          (testing "known base types are untouched"
+            (is (=? {:database_type "int"     :base_type :type/Integer} (get fields "id")))
+            (is (=? {:database_type "varchar" :base_type :type/Text}    (get fields "plain")))))))))
+
 (deftest ^:parallel type->database-type-test
   (testing "type->database-type multimethod returns correct SQL Server types"
     (are [base-type expected] (= expected (driver/type->database-type :sqlserver base-type))
@@ -982,3 +1139,58 @@
                    (lib/expression "diff-minutes" diff-minutes)
                    (qp/process-query)
                    (mt/rows))))))))
+
+(deftest ^:parallel connection-parameter-hosts-test
+  (testing "`serverName` in additional-options overrides the host in the URL, so it counts as a connection host"
+    (let [details {:host "real.example.com" :port 1433 :db "db"}
+          hosts   #(set (driver/connection-parameter-hosts :sqlserver %))]
+      (is (contains? (hosts (assoc details :additional-options "serverName=10.0.0.1")) "10.0.0.1"))
+      (is (not (contains? (hosts details) "10.0.0.1"))))))
+
+(deftest create-schema-if-needed!-escapes-schema-name-test
+  (testing "the transform target :schema is escaped in the EXEC literal"
+    (let [captured (atom nil)]
+      (with-redefs [driver/execute-raw-queries! (fn [_driver _conn-spec sql] (reset! captured sql))]
+        (driver/create-schema-if-needed! :sqlserver {} "x'); DROP TABLE secrets; --"))
+      (is (= "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'x''); DROP TABLE secrets; --') EXEC('CREATE SCHEMA \"x''); DROP TABLE secrets; --\";');"
+             (ffirst @captured))))))
+
+(deftest ^:parallel add-interval-honeysql-form-rejects-hostile-unit-test
+  (testing "the SQL Server DATEADD sink refuses a unit outside its closed allow-list"
+    (let [hostile (keyword "day) FROM t2 UNION SELECT pw FROM secrets --")]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid temporal unit"
+           (sql.qp/add-interval-honeysql-form :sqlserver :some_col 1 hostile))))
+    (testing "and still compiles a legitimate unit to the expected DATEPART token"
+      (is (= ["DATEADD(day, 1, some_col)"]
+             (sql/format-expr (sql.qp/add-interval-honeysql-form :sqlserver :some_col 1 :day)
+                              {:nested true}))))))
+
+(deftest ^:parallel escape-like-pattern-test
+  (testing "escape-like-pattern neutralizes every SQL Server LIKE metacharacter, so a filter value matches literally"
+    (are [pattern expected] (= expected (sql.qp/escape-like-pattern :sqlserver pattern))
+      "abc"           "abc"
+      "a%b"           "a[%]b"
+      "a_b"           "a[_]b"
+      ;; `[` opens a character class in SQL Server LIKE, so it must be escaped too (it was not, letting a public /
+      ;; embedded dashboard filter value run as a pattern rather than a literal)
+      "a[bc]"         "a[[]bc]"
+      "50% off [x]"   "50[%] off [[]x]"
+      ;; `[` is escaped first, so the brackets the other replacements introduce are not re-escaped
+      "x[%]y"         "x[[][%]]y")))
+
+(deftest cancelation-poisons-connection-test
+  (testing "discarding the Connection a query canceled on leaves the pool able to serve later queries (#39018)"
+    (mt/test-driver :sqlserver
+      (is (true? (sql-jdbc.execute/cancelation-poisons-connection? :sqlserver))
+          "SQL Server does not recover from a cancelation on its own, so the Connection must not be recycled")
+      (letfn [(rows [table n]
+                (let [mp (mt/metadata-provider)]
+                  (cond-> (lib/query mp (lib.metadata/table mp (mt/id table)))
+                    n    (lib/limit n)
+                    true (-> qp/process-query mt/rows))))]
+        ;; stopping at the limit leaves the statement producing, which is what triggers the cancel-and-discard
+        (is (= 4 (count (rows :venues 4))))
+        (testing "and a later query reading every row still succeeds"
+          (is (= 1000 (count (rows :checkins nil)))))))))

@@ -13,8 +13,6 @@
    [metabase.lib.test-util.notebook-helpers :as notebook-helpers]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
-   [metabase.permissions.models.data-permissions :as data-perms]
-   [metabase.permissions.models.permissions-group :as perms-group]
    [metabase.queries.models.card :as card]
    [metabase.queries.models.parameter-card :as parameter-card]
    [metabase.queries.schema :as queries.schema]
@@ -57,7 +55,16 @@
         (testing "add to a second Dashboard"
           (add-card-to-dash! dash-2)
           (is (= 2
-                 (get-dashboard-count))))))))
+                 (get-dashboard-count))))
+        (testing "a series placement on another card's dashcard counts too"
+          (mt/with-temp [:model/Card                {other-card-id :id} {}
+                         :model/DashboardCard       {dashcard-id :id}   {:card_id      other-card-id
+                                                                         :dashboard_id (u/the-id dash-1)}
+                         :model/DashboardCardSeries _                   {:dashboardcard_id dashcard-id
+                                                                         :card_id          card-id
+                                                                         :position         0}]
+            (is (= 3
+                   (get-dashboard-count)))))))))
 
 (deftest dropdown-widget-values-usage-count-test
   (let [hydrated-count (fn [card] (-> card
@@ -388,7 +395,7 @@
                     template-tags)})
 
 (deftest ^:parallel template-tag-parameters-text-tag-test
-  (testing ":text template tag without widget-type produces :string/= parameter type (QUE2-326)"
+  (testing ":text template tag without widget-type produces :string/= parameter type"
     (let [card (native-query-card
                 "SELECT * FROM PEOPLE WHERE NAME = {{name}}"
                 {"name" {:id           "_NAME_"
@@ -407,7 +414,7 @@
              (card/template-tag-parameters card))))))
 
 (deftest ^:parallel template-tag-parameters-boolean-tag-test
-  (testing ":boolean template tag without widget-type produces :boolean/= parameter type (QUE2-326)"
+  (testing ":boolean template tag without widget-type produces :boolean/= parameter type"
     (let [card (native-query-card
                 "SELECT 1 WHERE 1 = {{active}}"
                 {"active" {:id           "_ACTIVE_"
@@ -425,7 +432,7 @@
              (card/template-tag-parameters card))))))
 
 (deftest ^:parallel template-tag-parameters-dimension-category-widget-test
-  (testing ":dimension template tag with :category widget-type passes through widget-type (QUE2-326)"
+  (testing ":dimension template tag with :category widget-type passes through widget-type"
     (let [card (native-query-card
                 "SELECT * FROM PRODUCTS WHERE {{cat}}"
                 {"cat" {:id           "_CAT_"
@@ -978,35 +985,6 @@
                      :database_id   (mt/id)}
                     (t2/select-one :model/Card :id (u/the-id card))))))))))
 
-(deftest ^:parallel can-run-adhoc-query-test
-  (let [metadata-provider (mt/metadata-provider)
-        venues            (lib.metadata/table metadata-provider (mt/id :venues))
-        query             (lib/query metadata-provider venues)]
-    (mt/with-current-user (mt/user->id :crowberto)
-      (mt/with-temp [:model/Card card {:dataset_query query}
-                     :model/Card no-query {}]
-        (is (=? {:can_run_adhoc_query true}
-                (t2/hydrate card :can_run_adhoc_query)))
-        (is (=? {:can_run_adhoc_query false}
-                (t2/hydrate no-query :can_run_adhoc_query)))))))
-
-(deftest can-run-adhoc-query-respects-create-queries-perm-test
-  (testing "can_run_adhoc_query reflects a non-admin's create-queries permission on the card's table (#13347)"
-    (let [mp     (mt/metadata-provider)
-          venues (lib.metadata/table mp (mt/id :venues))
-          query  (lib/query mp venues)]
-      (mt/with-temp [:model/Card card {:dataset_query query}]
-        (mt/with-no-data-perms-for-all-users!
-          (data-perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
-          (data-perms/set-table-permission! (perms-group/all-users) (mt/id :venues) :perms/create-queries :no)
-          (mt/with-current-user (mt/user->id :rasta)
-            (is (=? {:can_run_adhoc_query false}
-                    (t2/hydrate (t2/select-one :model/Card :id (:id card)) :can_run_adhoc_query))))
-          (data-perms/set-table-permission! (perms-group/all-users) (mt/id :venues) :perms/create-queries :query-builder)
-          (mt/with-current-user (mt/user->id :rasta)
-            (is (=? {:can_run_adhoc_query true}
-                    (t2/hydrate (t2/select-one :model/Card :id (:id card)) :can_run_adhoc_query)))))))))
-
 (deftest audit-card-permissions-test
   (testing "Cards in audit collections are not readable or writable on OSS, even if they exist (#42645)"
     ;; Here we're testing the specific scenario where an EE instance is downgraded to OSS, but still has the audit
@@ -1148,6 +1126,42 @@
       (testing "CAN 'update' the type"
         (is (card/update-card! {:card-before-update card
                                 :card-updates {:type :question}}))))))
+
+(deftest updating-dashboard-internal-card-used-on-other-dashboards-test
+  ;; #82237
+  (mt/with-temp [:model/Dashboard     {home-dash-id :id}  {}
+                 :model/Dashboard     {other-dash-id :id} {}
+                 :model/Dashboard     {third-dash-id :id} {}
+                 :model/Card          card                {:dashboard_id home-dash-id}
+                 :model/DashboardCard _                   {:card_id (:id card) :dashboard_id other-dash-id}]
+    (mt/with-test-user :rasta
+      (testing "re-sending the unchanged dashboard_id alongside an edit succeeds"
+        (is (= "edited"
+               (:name (card/update-card! {:card-before-update card
+                                          :card-updates       {:name "edited" :dashboard_id home-dash-id}})))))
+      (testing "moving it into a different dashboard is still rejected"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Can't move question into dashboard"
+                              (card/update-card! {:card-before-update card
+                                                  :card-updates       {:dashboard_id third-dash-id}})))))))
+
+(deftest moving-collection-card-into-dashboard-while-on-other-dashboards-test
+  ;; Model-level guard for the narrowed check above; the API layer covers the same moves in
+  ;; `metabase.queries-rest.api.card-test`.
+  (mt/with-temp [:model/Dashboard     {dash-id :id}       {}
+                 :model/Dashboard     {other-dash-id :id} {}
+                 :model/Card          card                {}
+                 :model/DashboardCard _                   {:card_id (:id card) :dashboard_id other-dash-id}]
+    (mt/with-test-user :rasta
+      (testing "without delete-old-dashcards? the move is rejected"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Can't move question into dashboard"
+                              (card/update-card! {:card-before-update card
+                                                  :card-updates       {:dashboard_id dash-id}}))))
+      (testing "with delete-old-dashcards? the other dashcards are removed and the move succeeds"
+        (is (= dash-id
+               (:dashboard_id (card/update-card! {:card-before-update    card
+                                                  :card-updates          {:dashboard_id dash-id}
+                                                  :delete-old-dashcards? true}))))
+        (is (not (t2/exists? :model/DashboardCard :card_id (:id card) :dashboard_id other-dash-id)))))))
 
 (deftest update-does-not-break
   ;; There's currently a footgun in Toucan2 - if 1) the result of `before-update` doesn't have an ID, 2) part of your

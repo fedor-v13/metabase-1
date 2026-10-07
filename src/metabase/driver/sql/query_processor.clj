@@ -487,6 +487,20 @@
   driver/dispatch-on-initialized-driver
   :hierarchy #'driver/hierarchy)
 
+(defn check-interval-unit
+  "Throw unless `unit` is one of the closed set of temporal-interval units, then return it.
+
+  Several drivers turn the unit into SQL by interpolating `(name unit)` into a `[:raw …]` form, so the unit must be
+  constrained to the closed set here. The MBQL schema constrains the unit, but
+  that check does not run on stages spliced in from a source card, and the save-time schema is a `mu/defn` return schema
+  that is compiled out of a production build -- so this must be a plain runtime guard, not a `:pre` or a `mu` schema."
+  [unit]
+  (when-not (contains? driver-api/datetime-interval-units unit)
+    (throw (ex-info (tru "Invalid temporal unit: {0}" (pr-str unit))
+                    {:type driver-api/qp.error-type.invalid-query
+                     :unit unit})))
+  unit)
+
 (mu/defn adjust-start-of-week
   "Truncate to the day the week starts on.
 
@@ -731,13 +745,34 @@
   [_driver this]
   this)
 
+;; this is mostly a safeguard against unintentional SQL injection with a value like
+;;
+;;    {:raw "1) UNION SELECT 1 -- "}
+;;
+;; which Honey SQL will normally happily compile.
+(defmethod ->honeysql [:sql clojure.lang.IPersistentMap]
+  [driver _this]
+  (throw (ex-info "Unexpected ->honeysql call on a map"
+                  {:driver driver, :type driver-api/qp.error-type.invalid-query})))
+
 (defmethod ->honeysql [:sql Number]
   [_driver n]
   (inline-num n))
 
+(defn check-value-literal
+  "Throw unless `value` -- the value slot of a `:value` clause -- is a plain literal.
+
+  The slot is schema-typed `any?`, so drivers that build SQL from it directly instead of recursing
+  through [[->honeysql]] should check it themselves."
+  [driver value]
+  (when (coll? value)
+    (throw (ex-info "Unexpected collection in a :value clause"
+                    {:driver driver, :type driver-api/qp.error-type.invalid-query}))))
+
 (defmethod ->honeysql [:sql :value]
   [driver [_ value {base-type :base_type effective-type :effective_type}]]
   (when (some? value)
+    (check-value-literal driver value)
     (condp #(isa? %2 %1) (or effective-type base-type)
       ;; When we are dealing with a uuid type we should try to convert to a real UUID
       ;; If that fails,, we will add a fallback cast to "text"
@@ -1298,7 +1333,7 @@
   (if (some interval? args)
     (if-let [[field intervals] (u/pick-first (complement interval?) args)]
       (reduce (fn [hsql-form [_ amount unit]]
-                (add-interval-honeysql-form driver hsql-form amount unit))
+                (add-interval-honeysql-form driver hsql-form amount (check-interval-unit unit)))
               (->honeysql driver field)
               (map normalize-interval intervals))
       (throw (ex-info "Summing intervals is not supported" {:args args})))
@@ -1320,7 +1355,7 @@
   (if (interval? (first other-args))
     (reduce (fn [hsql-form [_ amount unit]]
               ;; We are adding negative amount. Inspired by `->honeysql [:sql :datetime-subtract]`.
-              (add-interval-honeysql-form driver hsql-form (- amount) unit))
+              (add-interval-honeysql-form driver hsql-form (- amount) (check-interval-unit unit)))
             (->honeysql driver first-arg)
             (map normalize-interval other-args))
     (into [:-]
@@ -1512,11 +1547,11 @@
 
 (defmethod ->honeysql [:sql :datetime-add]
   [driver [_ arg amount unit]]
-  (add-interval-honeysql-form driver (->honeysql driver arg) amount unit))
+  (add-interval-honeysql-form driver (->honeysql driver arg) amount (check-interval-unit unit)))
 
 (defmethod ->honeysql [:sql :datetime-subtract]
   [driver [_ arg amount unit]]
-  (add-interval-honeysql-form driver (->honeysql driver arg) (- amount) unit))
+  (add-interval-honeysql-form driver (->honeysql driver arg) (- amount) (check-interval-unit unit)))
 
 (defn datetime-diff-check-args
   "This util function is used by SQL implementations of ->honeysql for the `:datetime-diff` clause.
@@ -1894,39 +1929,36 @@
                  [:effective-type])))
 
 (def ^:dynamic *parent-honeysql-col-type-info*
-  "To be bound in `->honeysql <driver> <op>` where op is on of {:>, :>=, :<, :<=, :=, :between}`. Its value should be
-  `{:base-type keyword? :database-type string?}`. The value is used in `->honeysql <driver> :relative-datetime`,
-  the :snowflake implementation at the time of writing, and later in the [[metabase.query-processor.util.relative-datetime/maybe-cacheable-relative-datetime-honeysql]]
-  to determine (1) format of server-side generated sql temporal string and (2) the database type it should be cast to."
+  "To be bound in `->honeysql <driver> <op>` where op is on of {:>, :>=, :<, :<=, :=, :between}`. It carries the
+  compiled LHS's full HoneySQL type-info (see [[metabase.util.honey-sql-2/type-info]]) merged with `:base-type` and
+  `:effective-type` from the MBQL field clause. Driver-specific keys (e.g. Postgres's `::target-timezone` on a
+  `convertTimezone` output) round-trip through this map."
   nil)
+
+(defn- parent-honeysql-col-type-info
+  [field field-honeysql]
+  (merge (h2x/type-info field-honeysql)
+         (parent-honeysql-col-effective-type-map field)
+         (parent-honeysql-col-base-type-map field)))
 
 (defmethod ->honeysql [:sql :between]
   [driver [_ field min-val max-val]]
   (let [field-honeysql (->honeysql driver field)]
-    (binding [*parent-honeysql-col-type-info* (merge (when-let [database-type (h2x/database-type field-honeysql)]
-                                                       {:database-type database-type})
-                                                     (parent-honeysql-col-effective-type-map field)
-                                                     (parent-honeysql-col-base-type-map field))]
+    (binding [*parent-honeysql-col-type-info* (parent-honeysql-col-type-info field field-honeysql)]
       [:between field-honeysql (->honeysql driver min-val) (->honeysql driver max-val)])))
 
 (doseq [operator [:> :>= :< :<=]]
   (defmethod ->honeysql [:sql operator] ; [:> :>= :< :<=] -- For grep.
     [driver [_ field value]]
     (let [field-honeysql (->honeysql driver field)]
-      (binding [*parent-honeysql-col-type-info* (merge (when-let [database-type (h2x/database-type field-honeysql)]
-                                                         {:database-type database-type})
-                                                       (parent-honeysql-col-effective-type-map field)
-                                                       (parent-honeysql-col-base-type-map field))]
+      (binding [*parent-honeysql-col-type-info* (parent-honeysql-col-type-info field field-honeysql)]
         [operator field-honeysql (->honeysql driver value)]))))
 
 (defmethod ->honeysql [:sql :=]
   [driver [_ field value]]
   (assert (some? field))
   (let [field-honeysql (->honeysql driver (maybe-cast-uuid-for-equality driver field value))]
-    (binding [*parent-honeysql-col-type-info* (merge (when-let [database-type (h2x/database-type field-honeysql)]
-                                                       {:database-type database-type})
-                                                     (parent-honeysql-col-effective-type-map field)
-                                                     (parent-honeysql-col-base-type-map field))]
+    (binding [*parent-honeysql-col-type-info* (parent-honeysql-col-type-info field field-honeysql)]
       [:= field-honeysql (->honeysql driver value)])))
 
 (defn- correct-null-behaviour

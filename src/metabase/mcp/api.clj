@@ -4,6 +4,7 @@
   (:require
    [clojure.core.async :as a]
    [clojure.string :as str]
+   [clojure.walk :as walk]
    [compojure.response :as compojure.response]
    [metabase.api.common :as api]
    [metabase.api.macros.scope :as scope]
@@ -87,15 +88,11 @@
 (defn- handle-resources-list [id _params token-scopes]
   (jsonrpc-response id (mcp.resources/list-resources token-scopes)))
 
-(defn- handle-resources-read [id params session-id token-scopes]
+(defn- handle-resources-read [id params token-scopes]
   (let [uri (:uri params)]
     (if (or (not (string? uri)) (str/blank? uri))
       (jsonrpc-error id -32602 "Missing required parameter: uri")
-      (let [user-id     api/*current-user-id*
-            session-key (when user-id (mcp.session/get-or-create-session-key! session-id user-id))
-            options     {:session-key session-key
-                         :session-id  session-id}
-            result      (mcp.resources/read-resource uri token-scopes options)]
+      (let [result (mcp.resources/read-resource uri token-scopes {})]
         (case (:status result)
           (:not-found :scope-denied) (jsonrpc-error id -32602 "Resource not found")
           :ok                        (jsonrpc-response id {:contents (:contents result)}))))))
@@ -112,7 +109,7 @@
       "tools/list"                (handle-tools-list id params session-id token-scopes)
       "tools/call"                (handle-tools-call id params session-id token-scopes)
       "resources/list"            (handle-resources-list id params token-scopes)
-      "resources/read"            (handle-resources-read id params session-id token-scopes)
+      "resources/read"            (handle-resources-read id params token-scopes)
       "ping"                      (handle-ping id params)
       (if id
         (jsonrpc-error id -32601 (str "Method not found: " method))
@@ -216,7 +213,7 @@
 (defn- handle-post
   "Handle a POST request containing one or more JSON-RPC messages."
   [user-id request]
-  (let [body       (:body request)
+  (let [body       (walk/keywordize-keys (:body request))
         session-id (get-in request [:headers "mcp-session-id"])
         batch?     (sequential? body)]
     (cond
@@ -365,7 +362,8 @@
    (fn [request respond raise]
      (let [origin-error (validate-origin request)
            bearer-token (oauth-server/extract-bearer-token request)
-           session-auth api/*current-user-id*]
+           session-auth api/*current-user-id*
+           token-scopes (:token-scopes request)]
        (letfn [(dispatch [user-id token-scopes]
                  (request/with-current-user user-id
                    (if-let [throttle-err (check-throttle user-id)]
@@ -390,9 +388,10 @@
            (some? origin-error)
            (respond origin-error)
 
-           ;; Session auth (browser/cookie) — unrestricted scopes
+           ;; Respect the scope set attached to an authenticated request. Sessions without one
+           ;; retain unrestricted access.
            session-auth
-           (dispatch session-auth #{::scope/unrestricted})
+           (dispatch session-auth (or token-scopes #{::scope/unrestricted}))
 
            ;; Bearer token auth — validate and extract scopes
            bearer-token

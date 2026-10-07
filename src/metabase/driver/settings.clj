@@ -4,11 +4,50 @@
    [java-time.api :as t]
    [metabase.config.core :as config]
    [metabase.events.core :as events]
+   [metabase.premium-features.core :as premium-features]
    [metabase.settings.core :as setting :refer [defsetting]]
+   [metabase.startup.core :as startup]
    [metabase.util :as u]
+   [metabase.util.http :as u.http]
    [metabase.util.i18n :refer [deferred-tru]]))
 
 (set! *warn-on-reflection* true)
+
+(defsetting warehouse-allowed-networks
+  (deferred-tru (str "Controls which networks Metabase may connect to for warehouse connections.\n"
+                     "Options:\n"
+                     "- external-only (only globally routable public addresses)\n"
+                     "- allow-private (external + private networks but NOT loopback or link-local)\n"
+                     "- allow-all (no restrictions).\n"
+                     "Defaults to external-only on Metabase Cloud and allow-all when self-hosted.\n"
+                     "Also covers the SSH tunnel host and the database auth-provider URLs."))
+  :type       :keyword
+  :visibility :internal
+  :export?    false
+  ;; Environment only. This policy defends the host Metabase runs on against the people who administer Metabase --
+  ;; on Cloud, an admin loosening it would be reaching for our own infrastructure -- so it is never settable through
+  ;; the API or a config file, and a value that reached the application database some other way is ignored.
+  :setter     :none
+  :doc        (str "Set this when Metabase must reach a warehouse on a private network (allow-private) or on this "
+                   "machine (allow-all). There is no admin UI for it, and a value stored in the application "
+                   "database is ignored. Defaults to external-only on Metabase Cloud and allow-all when "
+                   "self-hosted. Metabase refuses to start if this is set to anything but one of the three "
+                   "policies, rather than run on a policy nobody chose.")
+  ;; No `:default`, because it depends on where we are running. On Cloud a warehouse is always reached across the
+  ;; public internet, so an internal address is somebody reaching for our own infrastructure rather than their
+  ;; database. Self-hosted, a warehouse on a private network is the ordinary case, and defaulting to anything
+  ;; stricter would break working instances on upgrade.
+  :getter     (fn []
+                (let [[env-var-name raw-value] (setting/env-var-source :warehouse-allowed-networks)]
+                  (or (u.http/env-network-policy env-var-name raw-value)
+                      (if (premium-features/is-hosted?)
+                        :external-only
+                        :allow-all)))))
+
+;; Reading it throws when the environment names a policy that does not exist: a typo stops the boot rather than
+;; surfacing at the first query against a warehouse.
+(defmethod startup/def-startup-validation! ::warehouse-allowed-networks [_]
+  (warehouse-allowed-networks))
 
 (defsetting ssh-heartbeat-interval-sec
   (deferred-tru "Controls how often the heartbeats are sent when an SSH tunnel is established (in seconds).")
@@ -23,7 +62,7 @@
 
 (defsetting report-timezone
   (deferred-tru "Connection timezone to use when executing queries. Defaults to system timezone.")
-  :encryption :no
+  :encryption :when-encryption-key-set
   :visibility :settings-manager
   :export?    true
   :audit      :getter
@@ -43,6 +82,7 @@
 
 (defsetting report-timezone-short
   "Current report timezone abbreviation"
+  :encryption :no
   :visibility :public
   :export?    true
   :setter     :none
@@ -59,6 +99,7 @@
 
 (defsetting report-timezone-long
   "Current report timezone string"
+  :encryption :no
   :visibility :public
   :export?    true
   :setter     :none
@@ -177,6 +218,16 @@
   (or (config/config-bool :mb-dangerous-unsafe-enable-testing-h2-connections-do-not-enable)
       false))
 
+(def ^:dynamic *impersonation-allow-write?*
+  "Whether an impersonated native query is allowed to be a single write statement rather than a single SELECT. Bound
+  by [[metabase.query-processor.writeback/execute-write-query!]] for custom write actions, and read
+  by [[metabase.driver.sql/validate-impersonated-query*]].
+
+  A dynamic binding rather than a key on the query: as a key it rode in from the JSON request body untouched, letting
+  a non-admin on an impersonated database run an INSERT/UPDATE/DELETE where only a SELECT is allowed. Nothing a caller
+  sends can set a binding."
+  false)
+
 (def ^:dynamic *allow-testing-sqlite-connections*
   "Whether to allow testing new SQLite connections. Normally disabled on hosted Metabase, which effectively prevents
   users from creating new SQLite databases from the API. Internal flows that need to test connections to the bundled
@@ -230,6 +281,7 @@
 
 (defsetting engines
   "Available database engines"
+  :encryption :no
   :visibility :public
   :setter     :none
   :getter     (fn []

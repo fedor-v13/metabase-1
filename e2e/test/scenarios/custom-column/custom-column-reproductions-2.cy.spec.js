@@ -1,38 +1,10 @@
 const { H } = cy;
 import { dedent } from "ts-dedent";
 
+import { SAMPLE_DB_ID } from "e2e/support/cypress_data";
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 
 const { PRODUCTS, PRODUCTS_ID, ORDERS, ORDERS_ID } = SAMPLE_DATABASE;
-
-describe("issue 54638", () => {
-  beforeEach(() => {
-    H.restore();
-    cy.signInAsNormalUser();
-    H.openOrdersTable({ mode: "notebook" });
-    H.addCustomColumn();
-  });
-
-  it("should be possible to click documentation links in the expression editor help text popover (metabase#54638)", () => {
-    H.CustomExpressionEditor.type("case(");
-    H.CustomExpressionEditor.helpText().within(() => {
-      cy.findByText("Learn more")
-        .scrollIntoView()
-        .should("be.visible")
-        .then(($a) => {
-          expect($a).to.have.attr("target", "_blank");
-          // Update attr to open in same tab, since Cypress does not support
-          // testing in multiple tabs.
-          $a.attr("target", "_self");
-        })
-        .click();
-      cy.url().should(
-        "equal",
-        "https://www.metabase.com/docs/latest/questions/query-builder/expressions/case.html",
-      );
-    });
-  });
-});
 
 describe("issue #54722", () => {
   beforeEach(() => {
@@ -307,9 +279,12 @@ describe("issue 55300", () => {
         name: "now",
         table_id: ORDERS_ID,
         definition: {
-          "source-table": ORDERS_ID,
-          aggregation: [["count"]],
-          filter: ["<", ["field", ORDERS.TOTAL, null], 100],
+          database: SAMPLE_DB_ID,
+          type: "query",
+          query: {
+            "source-table": ORDERS_ID,
+            filter: ["<", ["field", ORDERS.TOTAL, null], 100],
+          },
         },
       });
 
@@ -317,9 +292,12 @@ describe("issue 55300", () => {
         name: "Count",
         table_id: ORDERS_ID,
         definition: {
-          "source-table": ORDERS_ID,
-          aggregation: [["count"]],
-          filter: ["<", ["field", ORDERS.TOTAL, null], 100],
+          database: SAMPLE_DB_ID,
+          type: "query",
+          query: {
+            "source-table": ORDERS_ID,
+            filter: ["<", ["field", ORDERS.TOTAL, null], 100],
+          },
         },
       });
 
