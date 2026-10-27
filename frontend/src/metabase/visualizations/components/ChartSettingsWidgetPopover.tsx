@@ -45,6 +45,18 @@ export const ChartSettingsWidgetPopover = ({
 
   const hasMultipleSections = sections.current.length > 1;
 
+  // The "…" that opened this popover can be re-rendered away under it — a
+  // settings change that re-keys the field list, or another column picked in
+  // its select. Left open, the popover lost its reference: floating-ui placed
+  // it against an all-zero rect (the top of the window) and it no longer
+  // closed as a popover should. Close it instead; the user can reopen it from
+  // the "…" that replaced the old one.
+  useEffect(() => {
+    if (anchor && !anchor.isConnected) {
+      handleEndShowWidget();
+    }
+  });
+
   const onClose = () => {
     const activeElement = document.activeElement as HTMLElement;
     if (activeElement && scrollContainer?.contains(activeElement)) {
