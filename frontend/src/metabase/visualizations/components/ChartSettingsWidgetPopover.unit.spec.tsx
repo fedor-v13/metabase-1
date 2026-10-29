@@ -176,3 +176,30 @@ describe("Select widgets", () => {
     ).toBeInTheDocument();
   });
 });
+
+it("should close once its anchor is detached from the document", async () => {
+  const handleEndShowWidget = jest.fn();
+  const anchor = document.createElement("button");
+  document.body.appendChild(anchor);
+
+  const { rerender } = renderWithProviders(
+    <ChartSettingsWidgetPopover
+      anchor={anchor}
+      handleEndShowWidget={handleEndShowWidget}
+      widgets={[FORMATTING_WIDGET]}
+    />,
+  );
+  expect(await screen.findByText("Foo")).toBeInTheDocument();
+  expect(handleEndShowWidget).not.toHaveBeenCalled();
+
+  anchor.remove();
+  rerender(
+    <ChartSettingsWidgetPopover
+      anchor={anchor}
+      handleEndShowWidget={handleEndShowWidget}
+      widgets={[FORMATTING_WIDGET]}
+    />,
+  );
+
+  await waitFor(() => expect(handleEndShowWidget).toHaveBeenCalled());
+});
