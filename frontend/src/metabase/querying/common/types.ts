@@ -7,6 +7,7 @@ import type {
   DATE_PICKER_TRUNCATION_UNITS,
   EXCLUDE_DATE_PICKER_OPERATORS,
   SPECIFIC_DATE_PICKER_OPERATORS,
+  TIME_OF_DAY_PICKER_OPERATORS,
 } from "./constants";
 
 export type DatePickerOperator =
@@ -18,6 +19,9 @@ export type SpecificDatePickerOperator =
 
 export type ExcludeDatePickerOperator =
   (typeof EXCLUDE_DATE_PICKER_OPERATORS)[number];
+
+export type TimeOfDayPickerOperator =
+  (typeof TIME_OF_DAY_PICKER_OPERATORS)[number];
 
 export type DatePickerShortcut = (typeof DATE_PICKER_SHORTCUTS)[number];
 
@@ -58,6 +62,18 @@ export interface ExcludeDatePickerValue {
   values: number[];
 }
 
+/**
+ * A time of day, with no date part: "between 09:00 and 17:30, on any date". Only the time part of `values` matters.
+ *
+ * This is not part of `DatePickerValue` on purpose: of everything a date filter can be, only dashboard filters
+ * (`date/all-options`) offer it, and only when they are mapped to a column that has a time of day.
+ */
+export interface TimeOfDayPickerValue {
+  type: "time-of-day";
+  operator: TimeOfDayPickerOperator;
+  values: Date[];
+}
+
 export type DatePickerValue =
   | SpecificDatePickerValue
   | RelativeDatePickerValue
@@ -91,7 +107,8 @@ export type QuarterYearPickerValue = {
 export type DateFilterValue =
   | DatePickerValue
   | MonthYearPickerValue
-  | QuarterYearPickerValue;
+  | QuarterYearPickerValue
+  | TimeOfDayPickerValue;
 
 export type BooleanFilterValue = "true" | "false" | "is-null" | "not-null";
 

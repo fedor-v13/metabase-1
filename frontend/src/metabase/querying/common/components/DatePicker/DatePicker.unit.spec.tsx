@@ -7,14 +7,30 @@ import { DatePicker } from "./DatePicker";
 
 interface SetupOpts {
   value?: DatePickerValue;
+  withTimeOfDay?: boolean;
+  withTimeOfDayHandler?: boolean;
 }
 
-function setup({ value }: SetupOpts = {}) {
+function setup({
+  value,
+  withTimeOfDay,
+  withTimeOfDayHandler = true,
+}: SetupOpts = {}) {
   const onChange = jest.fn();
+  const onSelectTimeOfDay = jest.fn();
 
-  renderWithProviders(<DatePicker value={value} onChange={onChange} />);
+  renderWithProviders(
+    <DatePicker
+      value={value}
+      withTimeOfDay={withTimeOfDay}
+      onChange={onChange}
+      onSelectTimeOfDay={
+        withTimeOfDayHandler ? onSelectTimeOfDay : undefined
+      }
+    />,
+  );
 
-  return { onChange };
+  return { onChange, onSelectTimeOfDay };
 }
 
 describe("DatePicker", () => {
@@ -144,6 +160,26 @@ describe("DatePicker", () => {
       operator: "!=",
       values: [3, 5],
       unit: "day-of-week",
+    });
+  });
+
+  describe("time of day", () => {
+    it("should not offer the option by default", () => {
+      setup();
+      expect(screen.queryByText("Time of day…")).not.toBeInTheDocument();
+    });
+
+    it("should hand the option over to the caller", async () => {
+      const { onSelectTimeOfDay } = setup({ withTimeOfDay: true });
+
+      await userEvent.click(screen.getByText("Time of day…"));
+
+      expect(onSelectTimeOfDay).toHaveBeenCalled();
+    });
+
+    it("should not offer the option without a handler for it", () => {
+      setup({ withTimeOfDay: true, withTimeOfDayHandler: false });
+      expect(screen.queryByText("Time of day…")).not.toBeInTheDocument();
     });
   });
 });

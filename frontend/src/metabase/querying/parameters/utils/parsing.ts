@@ -110,6 +110,18 @@ function hasTimePart(s: string) {
   return s.includes("T");
 }
 
+const TIME_OF_DAY_FORMATS = ["HH:mm", "HH:mm:ss"];
+
+function serializeTimeOfDay(date: Date) {
+  const time = dayjs(date);
+  return time.second() === 0 ? time.format("HH:mm") : time.format("HH:mm:ss");
+}
+
+function parseTimeOfDay(value: string) {
+  const time = dayjs(value, TIME_OF_DAY_FORMATS, true);
+  return time.isValid() ? time : undefined;
+}
+
 type DateFilterSerializer = {
   regex: RegExp;
   serialize: (value: DateFilterValue) => string | undefined;
@@ -134,6 +146,60 @@ const MONTHS = [
 ];
 
 const DATE_FILTER_SERIALIZERS: DateFilterSerializer[] = [
+  // time of day, on any date: `time:09:00~17:30`, `time:~17:30`, `time:09:00~`.
+  // This has to come before the date patterns, which would otherwise read `09:00` as a date.
+  {
+    regex: /^time:([\d:]*)~([\d:]*)$/,
+    serialize: (value) => {
+      if (value.type === "time-of-day") {
+        const [startTime, endTime] = value.values;
+        switch (value.operator) {
+          case "between":
+            return `time:${serializeTimeOfDay(startTime)}~${serializeTimeOfDay(endTime)}`;
+          case "<":
+            return `time:~${serializeTimeOfDay(startTime)}`;
+          case ">":
+            return `time:${serializeTimeOfDay(startTime)}~`;
+        }
+      }
+    },
+    deserialize: (match) => {
+      const [, startText, endText] = match;
+      const startTime = startText ? parseTimeOfDay(startText) : undefined;
+      const endTime = endText ? parseTimeOfDay(endText) : undefined;
+
+      // a part that is there but isn't a time of day makes the whole value invalid
+      if ((startText && !startTime) || (endText && !endTime)) {
+        return undefined;
+      }
+
+      if (startTime != null && endTime != null) {
+        // a range given back to front means the same thing either way round
+        const [start, end] = endTime.isBefore(startTime)
+          ? [endTime, startTime]
+          : [startTime, endTime];
+        return {
+          type: "time-of-day",
+          operator: "between",
+          values: [start.toDate(), end.toDate()],
+        };
+      }
+      if (endTime != null) {
+        return {
+          type: "time-of-day",
+          operator: "<",
+          values: [endTime.toDate()],
+        };
+      }
+      if (startTime != null) {
+        return {
+          type: "time-of-day",
+          operator: ">",
+          values: [startTime.toDate()],
+        };
+      }
+    },
+  },
   // entire month, `2020-04`
   {
     regex: /^([0-9]{4})-([0-9]{2})$/,

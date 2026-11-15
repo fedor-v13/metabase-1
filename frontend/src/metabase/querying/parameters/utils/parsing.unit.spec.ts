@@ -1,3 +1,5 @@
+import dayjs from "dayjs";
+
 import type { DateFilterValue } from "metabase/querying/common/types";
 import type { ParameterValueOrArray } from "metabase-types/api";
 
@@ -477,4 +479,68 @@ describe("temporal unit parameters", () => {
       expect(deserializeTemporalUnitParameterValue(value)).toEqual(null);
     },
   );
+});
+
+describe("time of day parameters", () => {
+  const timeOfDay = (hour: number, minute: number, second = 0) =>
+    dayjs().startOf("day").hour(hour).minute(minute).second(second).toDate();
+
+  it.each<DateParameterCase>([
+    {
+      value: "time:09:00~17:30",
+      expectedValue: {
+        type: "time-of-day",
+        operator: "between",
+        values: [timeOfDay(9, 0), timeOfDay(17, 30)],
+      },
+    },
+    {
+      value: "time:~17:30",
+      expectedValue: {
+        type: "time-of-day",
+        operator: "<",
+        values: [timeOfDay(17, 30)],
+      },
+    },
+    {
+      value: "time:09:00~",
+      expectedValue: {
+        type: "time-of-day",
+        operator: ">",
+        values: [timeOfDay(9, 0)],
+      },
+    },
+    {
+      value: "time:09:00:30~17:30:45",
+      expectedValue: {
+        type: "time-of-day",
+        operator: "between",
+        values: [timeOfDay(9, 0, 30), timeOfDay(17, 30, 45)],
+      },
+    },
+  ])("should serialize and deserialize $value", ({ value, expectedValue }) => {
+    expect(serializeDateParameterValue(expectedValue)).toEqual(value);
+    expect(deserializeDateParameterValue(value)).toEqual(expectedValue);
+  });
+
+  it("should read a range given back to front either way round", () => {
+    expect(deserializeDateParameterValue("time:17:30~09:00")).toEqual({
+      type: "time-of-day",
+      operator: "between",
+      values: [timeOfDay(9, 0), timeOfDay(17, 30)],
+    });
+  });
+
+  it.each([
+    "time:",
+    "time:~",
+    "time:09:00",
+    "time:9:00~",
+    "time:25:00~17:00",
+    "time:09:60~",
+    "time:09:00~abc",
+    "09:00~17:30",
+  ])("should ignore invalid value %s", (value) => {
+    expect(deserializeDateParameterValue(value)).toBeNull();
+  });
 });

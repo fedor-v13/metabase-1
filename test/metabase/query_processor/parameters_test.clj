@@ -871,3 +871,70 @@
           (is (some? ss-idx))
           (is (seq rows))
           (is (every? #(= "Facebook MN" (nth % ss-idx)) rows)))))))
+
+;;; +----------------------------------------------------------------------------------------------------------------+
+;;; |                                            Time of Day Params                                                  |
+;;; +----------------------------------------------------------------------------------------------------------------+
+
+(defn- attempts-count-query
+  []
+  (let [mp (mt/metadata-provider)]
+    (-> (lib/query mp (lib.metadata/table mp (mt/id :attempts)))
+        (lib/aggregate (lib/count)))))
+
+(defn- with-time-of-day-param
+  [query col value]
+  (assoc query :parameters [{:type   :date/all-options
+                             :name   "when"
+                             :target [:dimension (lib.convert/->legacy-MBQL (lib/ref col))]
+                             :value  value}]))
+
+(defn- query-count
+  [query]
+  (mt/with-native-query-testing-context query
+    (run-count-query query)))
+
+(deftest ^:parallel time-of-day-param-time-column-test
+  (testing "a date parameter mapped to a TIME column filters by time of day, like the query builder's time filter"
+    (mt/test-driver :h2
+      (mt/dataset attempted-murders
+        (let [mp        (mt/metadata-provider)
+              time-col  (lib.metadata/field mp (mt/id :attempts :time))
+              base      (attempts-count-query)
+              ;; the filter the query builder's time filter picker builds for 09:00-17:30
+              qb-query  (lib/filter base (lib/between (lib/ref time-col) "09:00:00" "17:30:00"))
+              expected  (query-count qb-query)]
+          (testing "sanity check: the range covers some but not all of the rows"
+            (is (pos? expected))
+            (is (< expected (query-count base))))
+          (testing "MBQL question"
+            (is (= expected
+                   (query-count (with-time-of-day-param base time-col "time:09:00~17:30")))))
+          (testing "native question with a field filter"
+            (field-filter-param-test-is-count-= expected :attempts :time :date/all-options "time:09:00~17:30")))))))
+
+(deftest ^:parallel time-of-day-param-datetime-column-test
+  (testing "a date parameter mapped to a DATETIME column filters on the column's time of day, on any date"
+    (mt/test-driver :h2
+      (mt/dataset attempted-murders
+        (let [mp          (mt/metadata-provider)
+              col         (lib.metadata/field mp (mt/id :attempts :datetime))
+              base        (attempts-count-query)
+              ;; count the rows per hour of day independently, with plain temporal bucketing
+              counts-by-hour (mt/formatted-rows
+                              [int int]
+                              (qp/process-query
+                               (lib/breakout base (lib/with-temporal-bucket (lib/ref col) :hour-of-day))))
+              expected    (transduce (comp (filter (fn [[hour _]] (<= 9 hour 16)))
+                                           (map second))
+                                     + 0
+                                     counts-by-hour)]
+          (testing "sanity check: some but not all rows are between 09:00 and 17:00"
+            (is (pos? expected))
+            (is (< expected (query-count base))))
+          (testing "MBQL question"
+            (is (= expected
+                   (query-count (with-time-of-day-param base col "time:09:00~16:59:59")))))
+          (testing "native question with a field filter"
+            (field-filter-param-test-is-count-= expected :attempts :datetime :date/all-options
+                                                "time:09:00~16:59:59")))))))

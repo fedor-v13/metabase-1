@@ -4,14 +4,26 @@ import { renderWithProviders, screen, within } from "__support__/ui";
 
 import { DateAllOptionsWidget } from "./DateAllOptionsWidget";
 
-type SetupOpts = {
-  value?: string;
+const typeTime = async (input: HTMLElement, text: string) => {
+  await userEvent.type(input, text, {
+    initialSelectionStart: 0,
+    initialSelectionEnd: (input as HTMLInputElement).value.length,
+  });
 };
 
-function setup({ value }: SetupOpts = {}) {
+type SetupOpts = {
+  value?: string;
+  withTimeOfDay?: boolean;
+};
+
+function setup({ value, withTimeOfDay }: SetupOpts = {}) {
   const onChange = jest.fn();
   renderWithProviders(
-    <DateAllOptionsWidget value={value} onChange={onChange} />,
+    <DateAllOptionsWidget
+      value={value}
+      withTimeOfDay={withTimeOfDay}
+      onChange={onChange}
+    />,
   );
   return { onChange };
 }
@@ -72,5 +84,41 @@ describe("DateAllOptionsWidget", () => {
     expect(screen.getByLabelText("5 AM")).toBeChecked();
     expect(screen.getByLabelText("2 PM")).toBeChecked();
     expect(screen.getByLabelText("3 PM")).not.toBeChecked();
+  });
+
+  it('should allow to select a "time of day" filter', async () => {
+    const { onChange } = setup({ withTimeOfDay: true });
+    await userEvent.click(screen.getByText("Time of day…"));
+    const panel = screen.getByRole("tabpanel", { name: "Between" });
+    await typeTime(within(panel).getByLabelText("Start time"), "09:00");
+    await typeTime(within(panel).getByLabelText("End time"), "17:30");
+    await userEvent.click(within(panel).getByText("Apply"));
+    expect(onChange).toHaveBeenCalledWith("time:09:00~17:30");
+  });
+
+  it('should allow to select a "before" time of day filter', async () => {
+    const { onChange } = setup({ withTimeOfDay: true });
+    await userEvent.click(screen.getByText("Time of day…"));
+    await userEvent.click(screen.getByRole("tab", { name: "Before" }));
+    const panel = screen.getByRole("tabpanel", { name: "Before" });
+    await typeTime(within(panel).getByLabelText("Time"), "17:30");
+    await userEvent.click(within(panel).getByText("Apply"));
+    expect(onChange).toHaveBeenCalledWith("time:~17:30");
+  });
+
+  it('should accept a previously selected "time of day" filter', () => {
+    setup({ value: "time:09:00~17:30", withTimeOfDay: true });
+    const panel = screen.getByRole("tabpanel", { name: "Between" });
+    expect(within(panel).getByLabelText("Start time")).toHaveDisplayValue(
+      "09:00",
+    );
+    expect(within(panel).getByLabelText("End time")).toHaveDisplayValue(
+      "17:30",
+    );
+  });
+
+  it("should not offer a time of day filter for columns that have no time of day", () => {
+    setup();
+    expect(screen.queryByText("Time of day…")).not.toBeInTheDocument();
   });
 });

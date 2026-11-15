@@ -25,3 +25,15 @@ export const getFields = (parameter: UiParameter): Field[] => {
 export const getNonVirtualFields = (parameter: UiParameter) => {
   return getFields(parameter).filter((field) => !field.isVirtual());
 };
+
+/**
+ * Whether every field this parameter is mapped to has a time of day, i.e. is a TIME or a DATETIME column and not a
+ * date-only one. Filtering by time of day only means something for those.
+ */
+export const hasTimeOfDayFields = (parameter: UiParameter) => {
+  const fields = getFields(parameter);
+  return (
+    fields.length > 0 &&
+    fields.every((field) => field.isDate() && !field.isDateWithoutTime())
+  );
+};

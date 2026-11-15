@@ -2,6 +2,7 @@
   "Most of the code in [[metabase.driver.sql.parameters.substitution]] is actually tested by
   [[metabase.driver.sql.parameters.substitute-test]]."
   (:require
+   [clojure.string :as str]
    [clojure.test :refer :all]
    [java-time.api :as t]
    [metabase.driver :as driver]
@@ -11,8 +12,10 @@
    [metabase.lib.metadata :as lib.metadata]
    [metabase.lib.test-metadata :as meta]
    [metabase.lib.test-util :as lib.tu]
+   [metabase.lib.test-util.attempted-murders-metadata-provider :as lib.tu.attempted-murders-metadata-provider]
    ^{:clj-kondo/ignore [:deprecated-namespace]} [metabase.query-processor.store :as qp.store]
    [metabase.test :as mt]
+   [metabase.util :as u]
    [metabase.util.honey-sql-2 :as h2x]))
 
 (set! *warn-on-reflection* true)
@@ -216,3 +219,68 @@
                  :op       :>
                  :value    100}]
                "src")))))))
+
+;;; ------------------------------------- time-of-day Field Filter replacement tests ---------------------------------
+
+(defn- time-of-day-snippet-info
+  [field-name value]
+  (qp.store/with-metadata-provider lib.tu.attempted-murders-metadata-provider/metadata-provider
+    (#'sql.params.substitution/field-filter->replacement-snippet-info
+     :h2
+     (lib/parsed-field-filter-param
+      (lib.metadata/field (qp.store/metadata-provider)
+                          (lib.tu.attempted-murders-metadata-provider/id :attempts field-name))
+      {:type :date/all-options, :slug (name field-name), :value value}))))
+
+(deftest ^:parallel time-of-day-field-filter-time-column-test
+  (testing "a time-of-day field filter on a TIME column compares the column against times, not dates"
+    (is (= {:replacement-snippet     "\"PUBLIC\".\"ATTEMPTS\".\"TIME\" BETWEEN ? AND ?"
+            :prepared-statement-args [(t/local-time 9 0) (t/local-time 17 30)]}
+           (-> (time-of-day-snippet-info :time "time:09:00~17:30")
+               (update :prepared-statement-args vec))))))
+
+(deftest ^:parallel time-of-day-field-filter-open-ended-test
+  (testing "before"
+    (is (= {:replacement-snippet     "\"PUBLIC\".\"ATTEMPTS\".\"TIME\" < ?"
+            :prepared-statement-args [(t/local-time 17 30)]}
+           (-> (time-of-day-snippet-info :time "time:~17:30")
+               (update :prepared-statement-args vec)))))
+  (testing "after"
+    (is (= {:replacement-snippet     "\"PUBLIC\".\"ATTEMPTS\".\"TIME\" > ?"
+            :prepared-statement-args [(t/local-time 9 0)]}
+           (-> (time-of-day-snippet-info :time "time:09:00~")
+               (update :prepared-statement-args vec))))))
+
+(deftest ^:parallel time-of-day-field-filter-datetime-column-test
+  (testing "on a DATETIME column the time of day is extracted from the column, as seconds since midnight"
+    (let [{:keys [replacement-snippet prepared-statement-args]}
+          (time-of-day-snippet-info :datetime "time:09:00~17:30")]
+      (testing (pr-str replacement-snippet)
+        (is (str/includes? replacement-snippet "BETWEEN ? AND ?"))
+        (is (str/includes? replacement-snippet "\"PUBLIC\".\"ATTEMPTS\".\"DATETIME\""))
+        (is (str/includes? (u/lower-case-en replacement-snippet) "hour"))
+        (is (str/includes? (u/lower-case-en replacement-snippet) "minute")))
+      (is (= [32400 63000]
+             (vec prepared-statement-args))))))
+
+(deftest ^:parallel time-of-day-field-filter-date-column-test
+  (testing "a DATE column has no time of day, so the parameter is rejected"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Cannot filter a :type/Date column by time of day"
+         (time-of-day-snippet-info :date "time:09:00~17:30")))))
+
+(deftest ^:parallel time-of-day-value-is-not-bucketed-test
+  (testing "time-of-day values don't get the day bucketing date values get"
+    (is (nil? (sql.params.substitution/align-temporal-unit-with-param-type-and-value
+               :h2
+               (meta/field-metadata :orders :created-at)
+               :date/all-options
+               "time:09:00~17:30")))
+    (testing "other date values are unaffected"
+      (is (= :default
+             (sql.params.substitution/align-temporal-unit-with-param-type-and-value
+              :h2
+              (meta/field-metadata :orders :created-at)
+              :date/all-options
+              "2019-04-01"))))))

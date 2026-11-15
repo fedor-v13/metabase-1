@@ -29,9 +29,15 @@ type DatePickerProps = {
   availableDirections?: RelativeIntervalDirection[];
   minDate?: Date;
   maxDate?: Date;
+  /**
+   * Offer filtering by time of day, on any date. The picker itself lives outside this component -- selecting the
+   * option calls `onSelectTimeOfDay`, and it is up to the caller to show it.
+   */
+  withTimeOfDay?: boolean;
   renderSubmitButton?: (props: DatePickerSubmitButtonProps) => ReactNode;
   renderBackButton?: () => ReactNode;
   onChange: (value: DatePickerValue) => void;
+  onSelectTimeOfDay?: () => void;
   readOnly?: boolean;
 };
 
@@ -43,9 +49,11 @@ export function DatePicker({
   availableDirections = DATE_PICKER_DIRECTIONS,
   minDate,
   maxDate,
+  withTimeOfDay,
   renderSubmitButton = renderDefaultSubmitButton,
   renderBackButton,
   onChange,
+  onSelectTimeOfDay,
   readOnly,
 }: DatePickerProps) {
   const [type, setType] = useState(value?.type);
@@ -101,9 +109,11 @@ export function DatePicker({
           availableOperators={availableOperators}
           availableShortcuts={availableShortcuts}
           availableDirections={availableDirections}
+          withTimeOfDay={withTimeOfDay && onSelectTimeOfDay != null}
           renderBackButton={renderBackButton}
           onChange={onChange}
           onSelectType={setType}
+          onSelectTimeOfDay={onSelectTimeOfDay}
         />
       );
   }

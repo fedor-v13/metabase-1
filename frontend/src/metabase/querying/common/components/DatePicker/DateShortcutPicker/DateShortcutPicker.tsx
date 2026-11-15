@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode, useMemo } from "react";
+import { t } from "ttag";
 
 import type {
   DatePickerOperator,
@@ -18,18 +19,22 @@ interface DateShortcutPickerProps {
   availableOperators: DatePickerOperator[];
   availableShortcuts: DatePickerShortcut[];
   availableDirections: RelativeIntervalDirection[];
+  withTimeOfDay?: boolean;
   renderBackButton?: () => ReactNode;
   onChange: (value: RelativeDatePickerValue) => void;
   onSelectType: (type: DatePickerValueType) => void;
+  onSelectTimeOfDay?: () => void;
 }
 
 export function DateShortcutPicker({
   availableOperators,
   availableShortcuts,
   availableDirections,
+  withTimeOfDay,
   renderBackButton,
   onChange,
   onSelectType,
+  onSelectTimeOfDay,
 }: DateShortcutPickerProps) {
   const shortcutGroups = useMemo(() => {
     return getShortcutOptionGroups(availableShortcuts, availableDirections);
@@ -77,6 +82,19 @@ export function DateShortcutPicker({
           {option.label}
         </Button>
       ))}
+      {withTimeOfDay && onSelectTimeOfDay && (
+        <Button
+          classNames={{
+            root: Styles.Button,
+          }}
+          display="block"
+          variant="subtle"
+          onClick={onSelectTimeOfDay}
+          data-testid="date-picker-type-time-of-day"
+        >
+          {t`Time of day…`}
+        </Button>
+      )}
     </Box>
   );
 }
