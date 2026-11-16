@@ -1,3 +1,5 @@
+import dayjs from "dayjs";
+
 import type { DateFilterValue } from "metabase/querying/common/types";
 import { setLocalization } from "metabase/utils/i18n";
 import * as Lib from "metabase-lib";
@@ -396,4 +398,51 @@ describe("formatDate", () => {
       });
     },
   );
+});
+
+describe("getDateFilterDisplayName - time of day", () => {
+  const timeOfDay = (hour: number, minute: number) =>
+    dayjs().startOf("day").hour(hour).minute(minute).toDate();
+
+  it.each<{ value: DateFilterValue; expectedName: string }>([
+    {
+      value: {
+        type: "time-of-day",
+        operator: "between",
+        values: [timeOfDay(9, 0), timeOfDay(17, 30)],
+      },
+      expectedName: "9:00 AM - 5:30 PM",
+    },
+    {
+      value: {
+        type: "time-of-day",
+        operator: "<",
+        values: [timeOfDay(17, 30)],
+      },
+      expectedName: "Before 5:30 PM",
+    },
+    {
+      value: {
+        type: "time-of-day",
+        operator: ">",
+        values: [timeOfDay(9, 0)],
+      },
+      expectedName: "After 9:00 AM",
+    },
+  ])("should display $expectedName", ({ value, expectedName }) => {
+    expect(getDateFilterDisplayName(value)).toBe(expectedName);
+  });
+
+  it("should respect the instance time style", () => {
+    expect(
+      getDateFilterDisplayName(
+        {
+          type: "time-of-day",
+          operator: "between",
+          values: [timeOfDay(9, 0), timeOfDay(17, 30)],
+        },
+        { formattingSettings: { time_style: "HH:mm" } },
+      ),
+    ).toBe("09:00 - 17:30");
+  });
 });

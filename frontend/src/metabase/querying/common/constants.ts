@@ -11,6 +11,13 @@ export const EXCLUDE_DATE_PICKER_OPERATORS = [
   "not-null" as const,
 ];
 
+// a time of day is compared with the same operators the query builder's time filter uses
+export const TIME_OF_DAY_PICKER_OPERATORS = [
+  "between" as const,
+  "<" as const,
+  ">" as const,
+];
+
 export const DATE_PICKER_OPERATORS = [
   ...SPECIFIC_DATE_PICKER_OPERATORS,
   ...EXCLUDE_DATE_PICKER_OPERATORS,

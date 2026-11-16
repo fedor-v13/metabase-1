@@ -14,7 +14,10 @@ import type {
   UiParameter,
 } from "metabase-lib/v1/parameters/types";
 import { getNumberParameterArity } from "metabase-lib/v1/parameters/utils/operators";
-import { hasFields } from "metabase-lib/v1/parameters/utils/parameter-fields";
+import {
+  hasFields,
+  hasTimeOfDayFields,
+} from "metabase-lib/v1/parameters/utils/parameter-fields";
 import { getQueryType } from "metabase-lib/v1/parameters/utils/parameter-source";
 import {
   isBooleanParameter,
@@ -65,6 +68,24 @@ export const ParameterDropdownWidget = ({
   };
 
   if (isDateParameter(parameter)) {
+    const handleDateChange = (value: string) => {
+      setValue?.(value);
+      onPopoverClose?.();
+    };
+
+    // the only date widget that can filter by time of day
+    if (parameter.type === "date/all-options") {
+      return (
+        <DateAllOptionsWidget
+          value={value}
+          availableOperators={["=", ">", "<", "between", "!="]}
+          submitButtonLabel={value ? t`Update filter` : t`Add filter`}
+          withTimeOfDay={hasTimeOfDayFields(parameter)}
+          onChange={handleDateChange}
+        />
+      );
+    }
+
     const DateWidget = {
       "date/single": DateSingleWidget,
       "date/range": DateRangeWidget,
@@ -80,10 +101,7 @@ export const ParameterDropdownWidget = ({
           value={value}
           availableOperators={["=", ">", "<", "between", "!="]}
           submitButtonLabel={value ? t`Update filter` : t`Add filter`}
-          onChange={(value) => {
-            setValue?.(value);
-            onPopoverClose?.();
-          }}
+          onChange={handleDateChange}
         />
       );
     }

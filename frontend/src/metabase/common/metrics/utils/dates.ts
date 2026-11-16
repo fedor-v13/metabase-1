@@ -15,6 +15,7 @@ import type {
   QuarterYearPickerValue,
   RelativeDatePickerValue,
   SpecificDatePickerValue,
+  TimeOfDayPickerValue,
 } from "metabase/querying/common/types";
 import * as LibMetric from "metabase-lib/metric";
 import type { TemporalUnit } from "metabase-types/api";
@@ -136,7 +137,20 @@ export function getDateFilterClause(
       return getMonthYearFilterClause(dimension, value);
     case "quarter":
       return getQuarterYearFilterClause(dimension, value);
+    case "time-of-day":
+      return getTimeOfDayFilterClause(dimension, value);
   }
+}
+
+function getTimeOfDayFilterClause(
+  dimension: LibMetric.DimensionMetadata,
+  value: TimeOfDayPickerValue,
+): LibMetric.FilterClause {
+  return LibMetric.timeFilterClause({
+    operator: value.operator,
+    dimension,
+    values: value.values,
+  });
 }
 
 function getSpecificFilterClause(

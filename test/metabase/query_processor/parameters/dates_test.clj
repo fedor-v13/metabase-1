@@ -701,3 +701,135 @@
         (mt/with-temporary-setting-values [start-of-week first-day-of-week]
           (is (= expected
                  (params.dates/date-string->range "past1weeks"))))))))
+
+;;; +----------------------------------------------------------------------------------------------------------------+
+;;; |                                                   TIME OF DAY                                                  |
+;;; +----------------------------------------------------------------------------------------------------------------+
+
+(def ^:private time-field
+  [:field {:lib/uuid "00000000-0000-0000-0000-000000000010", :base-type :type/Time} "time"])
+
+(def ^:private datetime-field
+  [:field {:lib/uuid "00000000-0000-0000-0000-000000000011", :base-type :type/DateTime} "datetime"])
+
+(def ^:private date-field
+  [:field {:lib/uuid "00000000-0000-0000-0000-000000000012", :base-type :type/Date} "date"])
+
+(defn- seconds-of-day-expression
+  "The shape a time-of-day comparison takes against a column that has both a date and a time part. Every reference to
+  the column gets a `:lib/uuid` of its own, so the references in here carry none to match against."
+  [[tag opts id-or-name]]
+  (let [field-clause [tag (dissoc opts :lib/uuid) id-or-name]]
+    [:+ {}
+     [:* {} [:get-hour {} field-clause] 3600]
+     [:* {} [:get-minute {} field-clause] 60]
+     [:get-second {} field-clause]]))
+
+(deftest ^:parallel time-of-day-value?-test
+  (testing "values the time-of-day decoder understands"
+    (doseq [value ["time:09:00~17:30" "time:~17:30" "time:09:00~" "time:09:00:30~17:30:45"]]
+      (testing (pr-str value)
+        (is (true? (params.dates/time-of-day-value? value))))))
+  (testing "everything else"
+    (doseq [value ["2019-04-01" "2019-04-01~2019-04-03" "past30days" "exclude-hours-0" "thisday"
+                   ;; no range at all
+                   "time:"  "time:~" "time:09:00"
+                   ;; not a time of day
+                   "time:9:00~" "time:25:00~17:00" "time:09:60~" "time:09:00~tomorrow"
+                   "" nil 42]]
+      (testing (pr-str value)
+        (is (false? (params.dates/time-of-day-value? value)))))))
+
+(deftest ^:parallel time-of-day-filter-time-column-test
+  (testing "a `:type/Time` column is compared against the time of day directly, like the query builder does"
+    (testing "between, both ends included"
+      (is (=? [:between {} time-field "09:00:00" "17:30:00"]
+              (params.dates/date-string->filter "time:09:00~17:30" time-field))))
+    (testing "before"
+      (is (=? [:< {} time-field "17:30:00"]
+              (params.dates/date-string->filter "time:~17:30" time-field))))
+    (testing "after"
+      (is (=? [:> {} time-field "09:00:00"]
+              (params.dates/date-string->filter "time:09:00~" time-field))))
+    (testing "seconds are kept"
+      (is (=? [:between {} time-field "09:00:30" "17:30:45"]
+              (params.dates/date-string->filter "time:09:00:30~17:30:45" time-field))))
+    (testing "a range given back to front is flipped"
+      (is (=? [:between {} time-field "09:00:00" "17:30:00"]
+              (params.dates/date-string->filter "time:17:30~09:00" time-field))))
+    (testing "`:type/TimeWithTZ` columns go the same way"
+      (let [field (assoc-in time-field [1 :base-type] :type/TimeWithTZ)]
+        (is (=? [:between {} field "09:00:00" "17:30:00"]
+                (params.dates/date-string->filter "time:09:00~17:30" field)))))))
+
+(deftest ^:parallel time-of-day-filter-drops-bucketing-test
+  (testing "day bucketing is what breaks intraday filtering, so the comparison drops it (#33)"
+    (is (=? [:between {} [:field #(nil? (:temporal-unit %)) "time"] "09:00:00" "17:30:00"]
+            (params.dates/date-string->filter "time:09:00~17:30"
+                                              (lib/with-temporal-bucket time-field :day))))))
+
+(deftest ^:parallel time-of-day-filter-datetime-column-test
+  (testing "a column with a date and a time part is compared against its time of day, in seconds since midnight"
+    (testing "between"
+      (is (=? [:between {} (seconds-of-day-expression datetime-field) 32400 63000]
+              (params.dates/date-string->filter "time:09:00~17:30" datetime-field))))
+    (testing "before"
+      (is (=? [:< {} (seconds-of-day-expression datetime-field) 63000]
+              (params.dates/date-string->filter "time:~17:30" datetime-field))))
+    (testing "after"
+      (is (=? [:> {} (seconds-of-day-expression datetime-field) 32400]
+              (params.dates/date-string->filter "time:09:00~" datetime-field))))
+    (testing "every reference to the column gets its own :lib/uuid"
+      (let [filter-clause (params.dates/date-string->filter "time:09:00~17:30" datetime-field)
+            uuids         (->> filter-clause
+                               (tree-seq coll? seq)
+                               (keep #(when (map? %) (:lib/uuid %))))]
+        (is (= (count uuids) (count (distinct uuids))))))))
+
+(deftest ^:parallel time-of-day-filter-unknown-column-type-test
+  (testing "a reference that doesn't say what it points at is filtered on its time of day too"
+    (let [field [:field {:lib/uuid "00000000-0000-0000-0000-000000000013"} "whatever"]]
+      (is (=? [:between {} (seconds-of-day-expression field) 32400 63000]
+              (params.dates/date-string->filter "time:09:00~17:30" field))))))
+
+(deftest ^:parallel time-of-day-filter-field-metadata-test
+  (testing "when the reference doesn't say, the field it points at does"
+    (qp.store/with-metadata-provider (lib.tu/merged-mock-metadata-provider
+                                      meta/metadata-provider
+                                      {:fields [{:id             (meta/id :people :birth-date)
+                                                 :base-type      :type/Time
+                                                 :effective-type :type/Time}]})
+      (is (=? [:between {} [:field {} (meta/id :people :birth-date)] "09:00:00" "17:30:00"]
+              (params.dates/date-string->filter "time:09:00~17:30" (meta/id :people :birth-date)))))))
+
+(deftest ^:parallel time-of-day-filter-date-column-test
+  (testing "a date-only column has no time of day, so we say so rather than build a filter that can't mean anything"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Cannot filter a :type/Date column by time of day"
+         (params.dates/date-string->filter "time:09:00~17:30" date-field)))))
+
+(deftest ^:parallel time-of-day-filter-invalid-values-test
+  (testing "values that look like a time of day but aren't one are rejected like any other bad date value"
+    (doseq [value ["time:~" "time:" "time:9:00~" "time:25:00~17:00" "time:09:60~"]]
+      (testing (pr-str value)
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"Don't know how to parse date string"
+             (params.dates/date-string->filter value time-field)))))))
+
+(deftest ^:parallel time-of-day-range-test
+  (testing "time-of-day values also decode to a range, for raw SQL substitution"
+    (is (= {:start "09:00" :end "17:30"}
+           (params.dates/date-string->range "time:09:00~17:30")))
+    (is (= {:end "17:30"}
+           (params.dates/date-string->range "time:~17:30")))
+    (is (= {:start "09:00"}
+           (params.dates/date-string->range "time:09:00~")))
+    (is (= {:start "09:00:30" :end "17:30:45"}
+           (params.dates/date-string->range "time:09:00:30~17:30:45")))
+    (testing "exclusive ends move by a second"
+      (is (= {:start "09:00" :end "17:30:01"}
+             (params.dates/date-string->range "time:09:00~17:30" {:inclusive-end? false})))
+      (is (= {:start "08:59:59" :end "17:30"}
+             (params.dates/date-string->range "time:09:00~17:30" {:inclusive-start? false}))))))

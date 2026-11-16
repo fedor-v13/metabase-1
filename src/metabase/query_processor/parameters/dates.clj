@@ -11,6 +11,7 @@
    [metabase.driver :as driver]
    [metabase.driver.common :as driver.common]
    [metabase.lib.core :as lib]
+   [metabase.lib.metadata :as lib.metadata]
    [metabase.lib.schema.common :as lib.schema.common]
    [metabase.lib.schema.expression :as lib.schema.expression]
    [metabase.lib.schema.id :as lib.schema.id]
@@ -25,6 +26,7 @@
    [metabase.util.performance :refer [every? some get-in]]
    [metabase.util.time :as u.time])
   (:import
+   (java.time LocalTime)
    (java.time.temporal Temporal)))
 
 (set! *warn-on-reflection* true)
@@ -186,6 +188,146 @@
   [clause unit]
   (cond-> clause
     (= (first clause) :field) (lib/with-temporal-bucket unit)))
+
+;;; +----------------------------------------------------------------------------------------------------------------+
+;;; |                                            TIME OF DAY STRING DECODER                                          |
+;;; +----------------------------------------------------------------------------------------------------------------+
+
+;; A dashboard date filter can be mapped to any temporal column, `:type/Time` ones included, but every other value
+;; format a date parameter understands describes a date or a datetime. Filtering a TIME column with one of those
+;; compares a time of day against a full date(time), which can never match. `time:` values describe a time of day
+;; instead:
+;;
+;;     time:09:00~17:30 ; between 09:00 and 17:30, both ends included
+;;     time:~17:30      ; before 17:30
+;;     time:09:00~      ; after 09:00
+;;
+;; Seconds are optional, so `time:09:00~17:30` and `time:09:00:00~17:30:30` are both accepted. The inclusive
+;; `:between` and exclusive `:<` / `:>` semantics are the ones [[metabase.lib.fe-util/time-filter-clause]] uses, so a
+;; dashboard filter and the query builder's time filter picker mean the same thing by the same range.
+;;
+;; What the time of day is compared against depends on the column:
+;;
+;; * for `:type/Time` columns, the column itself -- the same filter the query builder would create;
+;; * for columns with both a date and a time part (`:type/DateTime` and friends), the time of day extracted from the
+;;   column, as seconds since midnight, so `time:09:00~17:30` means "between 9am and half past 5, on any day";
+;; * for date-only columns, nothing: a `:type/Date` column has no time of day, so we throw rather than generate a
+;;   filter that cannot mean anything.
+;;
+;; The column's type comes from the field reference itself, or from the field it points at when the reference
+;; doesn't say and the field is in the QP store. When neither says, we take the extraction route, which is correct
+;; for any column with a time part and works for TIME columns on every database we know of.
+
+(def ^:private time-of-day-part-regex
+  #"[0-9]{2}:[0-9]{2}(?::[0-9]{2})?")
+
+(def time-of-day-regex
+  "Regex to match a time-of-day parameter value, e.g. `time:09:00~17:30`, `time:~17:30` or `time:09:00~`."
+  (re-pattern (format "time:(%s)?~(%s)?" time-of-day-part-regex time-of-day-part-regex)))
+
+(defn- parse-time-of-day-part
+  [s]
+  (when s
+    (try
+      (let [t (u.date/parse s)]
+        (when (instance? LocalTime t)
+          t))
+      (catch Throwable _
+        nil))))
+
+(defn- time-of-day-parser
+  "Parse a `time:` parameter value into `{:start <LocalTime>, :end <LocalTime>, :unit :second}`. Either end of the
+  range may be missing, but not both. A range given back to front is flipped, like the query builder does."
+  [param-value]
+  (when-let [[_ start-str end-str] (re-matches time-of-day-regex param-value)]
+    (let [start (parse-time-of-day-part start-str)
+          end   (parse-time-of-day-part end-str)]
+      (when (and (or start end)
+                 (or (nil? start-str) start)
+                 (or (nil? end-str) end))
+        (let [[start end] (if (and start end (pos? (compare start end)))
+                            [end start]
+                            [start end])]
+          (cond-> {:unit :second}
+            start (assoc :start start)
+            end   (assoc :end end)))))))
+
+(defn time-of-day-value?
+  "Whether `value` is a time-of-day date parameter value such as `time:09:00~17:30`."
+  [value]
+  (boolean (and (string? value)
+                (time-of-day-parser value))))
+
+(defn- time-of-day-literal
+  "Format a `LocalTime` as an MBQL time literal, e.g. `09:00:00`."
+  [^LocalTime t]
+  (t/format "HH:mm:ss" t))
+
+(defn- second-of-day
+  [^LocalTime t]
+  (.toSecondOfDay t))
+
+(defn- field-id-temporal-type
+  [field-clause]
+  (let [[tag _opts id-or-name] field-clause]
+    (when (and (= tag :field)
+               (pos-int? id-or-name)
+               (qp.store/initialized?))
+      (try
+        (when-let [field (lib.metadata/field (qp.store/metadata-provider) id-or-name)]
+          ((some-fn :effective-type :base-type) field))
+        (catch Throwable _
+          nil)))))
+
+(defn- field-clause-temporal-type
+  "Best guess at the effective type of the column `field-clause` refers to: whatever the reference itself says, or
+  else the type of the field it points at. `nil` when neither says."
+  [field-clause]
+  (when (vector? field-clause)
+    (let [opts (when (map? (second field-clause))
+                 (second field-clause))]
+      (or (:effective-type opts)
+          (:base-type opts)
+          (field-id-temporal-type field-clause)))))
+
+(defn- without-temporal-unit-if-field
+  [clause]
+  (cond-> clause
+    (= (first clause) :field) (lib/with-temporal-bucket nil)))
+
+(defn- time-of-day-expression
+  "An expression for the time of day of `clause`, as the number of seconds since midnight. Each reference to
+  `clause` gets its own `:lib/uuid`, since a query may not contain the same one twice."
+  [clause]
+  (lib/+ (lib/* (lib/get-hour (lib/fresh-uuids clause)) 3600)
+         (lib/* (lib/get-minute (lib/fresh-uuids clause)) 60)
+         (lib/get-second (lib/fresh-uuids clause))))
+
+(defn- time-of-day-filter
+  [{:keys [start end]} field-clause]
+  (let [field-clause (without-temporal-unit-if-field field-clause)
+        column-type  (field-clause-temporal-type field-clause)]
+    (when (and column-type (not (isa? column-type :type/HasTime)))
+      (throw (ex-info (tru "Cannot filter a {0} column by time of day: it has no time of day" column-type)
+                      {:type        qp.error-type/invalid-parameter
+                       :column-type column-type})))
+    (let [[expr lower upper] (if (isa? column-type :type/Time)
+                               [field-clause
+                                (some-> start time-of-day-literal)
+                                (some-> end time-of-day-literal)]
+                               [(time-of-day-expression field-clause)
+                                (some-> start second-of-day)
+                                (some-> end second-of-day)])]
+      (cond
+        (and lower upper) (lib/between expr lower upper)
+        lower             (lib/> expr lower)
+        :else             (lib/< expr upper)))))
+
+(def ^:private time-of-day-string-decoders
+  [{:parser time-of-day-parser
+    :range  (fn [parsed _dt]
+              (select-keys parsed [:start :end :unit]))
+    :filter time-of-day-filter}])
 
 (def ^:private relative-date-string-decoders
   [{:parser #(= % "today")
@@ -393,7 +535,8 @@
                   (apply lib/!= (with-temporal-unit-if-field field-clause (excluded-temporal-unit unit)) exclusions))))}])
 
 (def ^:private all-date-string-decoders
-  (concat relative-date-string-decoders absolute-date-string-decoders))
+  ;; time-of-day decoders go first so that a `time:` value is never claimed by a decoder that reads it as a date
+  (concat time-of-day-string-decoders relative-date-string-decoders absolute-date-string-decoders))
 
 (mu/defn- execute-decoders
   "Returns the first successfully decoded value, run through both parser and a range/filter decoder depending on
@@ -460,9 +603,11 @@
   (let [now (if (and driver/*driver* (qp.store/initialized?))
               (t/local-date-time (qp.timezone/now))
               (t/local-date-time))]
-    ;; Relative dates respect the given time zone because a notion like "last 7 days" might mean a different range of
-    ;; days depending on the user timezone
-    (or (execute-decoders relative-date-string-decoders :range now date-string)
+    ;; Time-of-day ranges are neither dates nor relative to now, so they get decoded first
+    (or (execute-decoders time-of-day-string-decoders :range nil date-string)
+        ;; Relative dates respect the given time zone because a notion like "last 7 days" might mean a different range
+        ;; of days depending on the user timezone
+        (execute-decoders relative-date-string-decoders :range now date-string)
         ;; Absolute date ranges don't need the time zone conversion because in SQL the date ranges are compared
         ;; against the db field value that is casted granularity level of a day in the db time zone
         (execute-decoders absolute-date-string-decoders :range nil date-string)

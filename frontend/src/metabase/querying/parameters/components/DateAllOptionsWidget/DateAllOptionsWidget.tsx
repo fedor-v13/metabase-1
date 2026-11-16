@@ -1,13 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { P, match } from "ts-pattern";
 import { t } from "ttag";
 
-import { DatePicker } from "metabase/querying/common/components/DatePicker";
+import {
+  DatePicker,
+  TimeOfDayPicker,
+} from "metabase/querying/common/components/DatePicker";
 import type {
+  DateFilterValue,
   DatePickerOperator,
   DatePickerShortcut,
   DatePickerValue,
   RelativeIntervalDirection,
+  TimeOfDayPickerValue,
 } from "metabase/querying/common/types";
 import {
   deserializeDateParameterValue,
@@ -24,6 +29,8 @@ type DateAllOptionsWidgetProps = {
   minDate?: Date;
   maxDate?: Date;
   submitButtonLabel?: string;
+  /** Offer "Time of day", for parameters mapped to a column that has a time of day. */
+  withTimeOfDay?: boolean;
   onChange: (value: string) => void;
 };
 
@@ -34,41 +41,69 @@ export function DateAllOptionsWidget({
   minDate,
   maxDate,
   submitButtonLabel = t`Apply`,
+  withTimeOfDay,
   onChange,
   availableShortcuts,
 }: DateAllOptionsWidgetProps) {
-  const pickerValue = useMemo(() => getPickerValue(value), [value]);
+  const filterValue = useMemo(
+    () => deserializeDateParameterValue(value),
+    [value],
+  );
+  const [isTimeOfDay, setIsTimeOfDay] = useState(
+    filterValue?.type === "time-of-day",
+  );
 
-  const handleChange = (newPickerValue: DatePickerValue) => {
-    onChange(serializeDateParameterValue(newPickerValue));
+  const handleChange = (newValue: DateFilterValue) => {
+    onChange(serializeDateParameterValue(newValue));
   };
+
+  const renderSubmitButton = ({ isDisabled }: { isDisabled?: boolean }) => (
+    <Button type="submit" variant="filled" disabled={isDisabled}>
+      {submitButtonLabel}
+    </Button>
+  );
+
+  if (isTimeOfDay) {
+    return (
+      <TimeOfDayPicker
+        value={getTimeOfDayValue(filterValue)}
+        renderSubmitButton={renderSubmitButton}
+        onChange={handleChange}
+        onBack={() => setIsTimeOfDay(false)}
+      />
+    );
+  }
 
   return (
     <DatePicker
-      value={pickerValue}
+      value={getPickerValue(filterValue)}
       availableOperators={availableOperators}
       availableShortcuts={availableShortcuts}
       availableDirections={availableDirections}
       minDate={minDate}
       maxDate={maxDate}
-      renderSubmitButton={({ isDisabled }) => (
-        <Button type="submit" variant="filled" disabled={isDisabled}>
-          {submitButtonLabel}
-        </Button>
-      )}
+      withTimeOfDay={withTimeOfDay}
+      renderSubmitButton={renderSubmitButton}
       onChange={handleChange}
+      onSelectTimeOfDay={() => setIsTimeOfDay(true)}
     />
   );
 }
 
 function getPickerValue(
-  value: ParameterValueOrArray | null | undefined,
+  value: DateFilterValue | null,
 ): DatePickerValue | undefined {
-  return match(deserializeDateParameterValue(value))
+  return match(value)
     .returnType<DatePickerValue | undefined>()
     .with(
       { type: P.union("specific", "relative", "exclude") },
       (value) => value,
     )
     .otherwise(() => undefined);
+}
+
+function getTimeOfDayValue(
+  value: DateFilterValue | null,
+): TimeOfDayPickerValue | undefined {
+  return value?.type === "time-of-day" ? value : undefined;
 }

@@ -15,6 +15,7 @@ import type {
   QuarterYearPickerValue,
   RelativeDatePickerValue,
   SpecificDatePickerValue,
+  TimeOfDayPickerValue,
 } from "metabase/querying/common/types";
 import * as Lib from "metabase-lib";
 
@@ -147,7 +148,20 @@ export function getDateFilterClause(
       return getMonthYearFilterClause(column, value);
     case "quarter":
       return getQuarterYearFilterClause(column, value);
+    case "time-of-day":
+      return getTimeOfDayFilterClause(column, value);
   }
+}
+
+function getTimeOfDayFilterClause(
+  column: Lib.ColumnMetadata,
+  value: TimeOfDayPickerValue,
+): Lib.ExpressionClause {
+  return Lib.timeFilterClause({
+    operator: value.operator,
+    column,
+    values: value.values,
+  });
 }
 
 function getSpecificFilterClause(

@@ -107,7 +107,10 @@
 
 (defmethod align-temporal-unit-with-param-type-and-value :default
   [_driver _field param-type value]
-  (when (params.dates/date-type? param-type)
+  (when (and (params.dates/date-type? param-type)
+             ;; time-of-day values build their own comparison from the unbucketed column, see
+             ;; [[metabase.query-processor.parameters.dates/time-of-day-value?]]
+             (not (params.dates/time-of-day-value? value)))
     (if-let [exclusion-type (params.dates/exclusion-date-type param-type value)]
       exclusion-type
       :default)))
@@ -319,6 +322,19 @@
            (honeysql->replacement-snippet-info driver))
 
       (params.dates/exclusion-date-type param-type value)
+      (let [field-ref (field->field-ref driver field param-type value)]
+        #_{:clj-kondo/ignore [:deprecated-var]}
+        (->> (params.dates/date-string->filter value field-ref)
+             lib/desugar-filter-clause
+             driver-api/wrap-value-literals-in-mbql5
+             ->honeysql*
+             (honeysql->replacement-snippet-info driver)))
+
+      ;; Time-of-day values such as `time:09:00~17:30` are compiled from their MBQL filter clause, the same way
+      ;; exclusions are: the comparison may have to extract the time of day from the column, so the field reference
+      ;; can't be generated separately from the comparison itself.
+      (and (params.dates/date-type? param-type)
+           (params.dates/time-of-day-value? value))
       (let [field-ref (field->field-ref driver field param-type value)]
         #_{:clj-kondo/ignore [:deprecated-var]}
         (->> (params.dates/date-string->filter value field-ref)

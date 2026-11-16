@@ -48,6 +48,20 @@ export function getDateFilterDisplayName(
       },
     )
     .with(
+      { type: "time-of-day", operator: "between" },
+      ({ values: [startTime, endTime] }) => {
+        return `${formatTimeOfDay(startTime, formattingSettings)} - ${formatTimeOfDay(endTime, formattingSettings)}`;
+      },
+    )
+    .with({ type: "time-of-day", operator: "<" }, ({ values: [time] }) => {
+      return c("Before a time of day. Example: Before 5:30 PM.")
+        .t`Before ${formatTimeOfDay(time, formattingSettings)}`;
+    })
+    .with({ type: "time-of-day", operator: ">" }, ({ values: [time] }) => {
+      return c("After a time of day. Example: After 9:00 AM.")
+        .t`After ${formatTimeOfDay(time, formattingSettings)}`;
+    })
+    .with(
       { type: "relative" },
       ({ value, unit, offsetValue, offsetUnit, options }) => {
         if (offsetValue != null && offsetUnit != null) {
@@ -87,6 +101,14 @@ export function getDateFilterDisplayName(
       return formatQuarter(quarter, year);
     })
     .exhaustive();
+}
+
+export function formatTimeOfDay(
+  time: Date,
+  formattingSettings: DateFormattingSettings = {},
+) {
+  const { time_style = DEFAULT_TIME_STYLE } = formattingSettings;
+  return dayjs(time).format(time_style);
 }
 
 export function formatDate(
