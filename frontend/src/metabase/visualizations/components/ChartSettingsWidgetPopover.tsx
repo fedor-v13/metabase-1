@@ -78,6 +78,13 @@ export const ChartSettingsWidgetPopover = ({
         size: { padding: 5 },
       }}
       styles={{ dropdown: { overflow: "visible" } }}
+      // The dashboard renders this popover inside the visualization settings
+      // modal, which is a React descendant of DashCardActionsPanel. That panel
+      // stops mousedown so the grid does not start dragging the card, and
+      // React's stopPropagation stops the native event with it — so the
+      // mousedown never reaches the document listener Mantine dismisses on.
+      // pointerdown is not swallowed, so dismiss on that as well.
+      clickOutsideEvents={["pointerdown", "mousedown", "touchstart"]}
       {...(isEmbeddingSdk() && {
         withinPortal: false,
         floatingStrategy: "fixed",

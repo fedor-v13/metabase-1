@@ -203,3 +203,32 @@ it("should close once its anchor is detached from the document", async () => {
 
   await waitFor(() => expect(handleEndShowWidget).toHaveBeenCalled());
 });
+
+it("should close on an outside click even when an ancestor swallows mousedown", async () => {
+  // The dashboard's DashCardActionsPanel stops mousedown so react-grid-layout
+  // does not start dragging the card, and React stops the native event with it,
+  // so the document never sees the mousedown — the event Mantine popovers
+  // dismiss on by default.
+  const handleEndShowWidget = jest.fn();
+  const anchor = document.createElement("button");
+  document.body.appendChild(anchor);
+
+  const { container } = renderWithProviders(
+    <div>
+      <button data-testid="outside">Outside</button>
+      <ChartSettingsWidgetPopover
+        anchor={anchor}
+        handleEndShowWidget={handleEndShowWidget}
+        widgets={[FORMATTING_WIDGET]}
+      />
+    </div>,
+  );
+  container.addEventListener("mousedown", (event) => event.stopPropagation());
+
+  expect(await screen.findByText("Foo")).toBeInTheDocument();
+  expect(handleEndShowWidget).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByTestId("outside"));
+
+  await waitFor(() => expect(handleEndShowWidget).toHaveBeenCalled());
+});
