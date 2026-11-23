@@ -462,9 +462,11 @@
             (is (str/includes? csp "default-src 'none'"))
             (is (str/includes? csp "script-src 'unsafe-eval'"))
             (is (not (str/includes? csp "sandbox")))
-            (is (str/includes? csp "frame-ancestors 'self'"))))
-        (testing "framing is allowed for same-origin (overrides the global X-Frame-Options: DENY)"
-          (is (= "SAMEORIGIN" (get headers "X-Frame-Options"))))
+            (testing (str "any ancestor, because `frame-ancestors` constrains the whole chain and an "
+                          "embedded dashboard's chain ends at the customer's page")
+              (is (str/includes? csp "frame-ancestors *")))))
+        (testing "no X-Frame-Options, which has no \"any ancestor\" value and would re-block embeds"
+          (is (nil? (get headers "X-Frame-Options"))))
         (testing "hardening headers are present"
           (is (= "nosniff"     (get headers "X-Content-Type-Options")))
           (is (= "no-referrer" (get headers "Referrer-Policy")))
@@ -473,10 +475,10 @@
   (testing "GET /sandbox-host does not require a premium token"
     (mt/with-premium-features #{}
       (is (mt/user-http-request :rasta :get 200 "ee/custom-viz-plugin/sandbox-host"))))
-  (testing "GET /sandbox-host requires authentication"
+  (testing "GET /sandbox-host does not require authentication - embed viewers are anonymous"
     (mt/with-premium-features #{:custom-viz}
-      (is (= "Unauthenticated"
-             (client/client :get 401 "ee/custom-viz-plugin/sandbox-host"))))))
+      (is (str/includes? (client/client :get 200 "ee/custom-viz-plugin/sandbox-host")
+                         "<!doctype html>")))))
 
 ;;; ------------------------------------------------ Bundle Endpoint ------------------------------------------------
 

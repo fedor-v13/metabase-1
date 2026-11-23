@@ -430,12 +430,27 @@
        (or (= (:request-method request) :options)
            (contains? #{400 402} (:status response)))))
 
+(def ^:private custom-viz-sandbox-host-uri
+  "The one API route that serves a document meant to be framed. See
+  [[metabase.custom-viz-plugin.sandbox-api]]."
+  "/api/ee/custom-viz-plugin/sandbox-host")
+
+(defn- framable?
+  "Is this a request for a document we expect to be rendered inside an iframe? Those get
+  `frame-ancestors *` and no `X-Frame-Options`, since the ancestor chain is the host page's, not
+  ours. The custom-viz sandbox document is framed by whichever Metabase document is rendering a
+  `custom:*` visualization, which in an embed is itself framed by the customer's page."
+  [request]
+  (or (request/public? request)
+      (request/embed? request)
+      (= (:uri request) custom-viz-sandbox-host-uri)))
+
 (defn- add-security-headers* [request response]
   ;; merge is other way around so that handler can override headers
   (let [headers (security-headers
                  :origin         (get (:headers request) "origin")
                  :nonce          (:nonce request)
-                 :allow-iframes? ((some-fn request/public? request/embed?) request)
+                 :allow-iframes? (framable? request)
                  :allow-cache?   (request/cacheable? request))
         cors-headers (when (always-allow-cors? request response)
                        {"Access-Control-Allow-Origin" "*"
