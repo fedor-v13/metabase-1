@@ -21,10 +21,20 @@
 (def ^:private sandbox-host-csp
   "CSP applied ONLY to the sandbox iframe document.
    - `'unsafe-eval'` required by near-membrane to evaluate plugin code inside the realm.
-   - `frame-ancestors 'self'` - so Metabase can embed this document."
+   - `frame-ancestors *` - `frame-ancestors` is matched against the *whole* ancestor chain, not just
+     the immediate parent. `'self'` therefore held only while Metabase was the top-level document:
+     embed a dashboard on a customer page and the chain becomes [customer page, /embed/sdk/v1], the
+     customer origin fails the check, the browser blocks this document, and every `custom:*` card
+     silently falls back to the default Table. `/embed/sdk/v1`, the document that frames this one,
+     is already `frame-ancestors *`, so matching it widens nothing.
+
+   Framing this document is inert on its own: the body is empty and `script-src` lists only
+   `'unsafe-eval'` - no `'self'`, no `'unsafe-inline'`, no host - so nothing can ever start
+   executing here. `eval` is reachable only from the same-origin Metabase document that created the
+   iframe and holds a handle to its realm; a cross-origin ancestor cannot reach into it at all."
   (str "default-src 'none'; "
        "script-src 'unsafe-eval'; "
-       "frame-ancestors 'self';"))
+       "frame-ancestors *;"))
 
 (api.macros/defendpoint :get "/sandbox-host" :- :any
   "Serve a minimal HTML document used as the iframe `src` for the near-membrane custom-viz
@@ -35,7 +45,9 @@
   {:status  200
    :headers {"Content-Type"                 "text/html; charset=utf-8"
              "Content-Security-Policy"      sandbox-host-csp
-             "X-Frame-Options"              "SAMEORIGIN"
+             ;; Deliberately no `X-Frame-Options`: it has no "any ancestor" value, so `SAMEORIGIN`
+             ;; would keep blocking embedded viewers wherever it is still honoured over
+             ;; `frame-ancestors`.
              "X-Content-Type-Options"       "nosniff"
              "Cross-Origin-Resource-Policy" "same-origin"
              "Referrer-Policy"              "no-referrer"
